@@ -215,7 +215,6 @@ class AddCommentView(APIView):
             return Response({'error': f'Error adding comment: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def add_comment_to_docx(self, file_path, paragraph_id, comment_id, author, text):
-        """Add a new comment to the DOCX file"""
         try:
             # Create a backup
             backup_path = file_path + '.backup'
