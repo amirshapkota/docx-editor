@@ -60,7 +60,7 @@ class UploadDocumentView(APIView):
                     if comments_part:
                         for comment_id, comment in enumerate(comments_part.comments):
                             # This is simplified comment extraction
-                            # In real project, we need to map comments to paragraphs
+                            # In real project we need to map comments to paragraphs
                             comment_obj = Comment.objects.create(
                                 document=document,
                                 paragraph=document.paragraphs.first(),  # Simplified mapping
@@ -85,3 +85,41 @@ class UploadDocumentView(APIView):
         except Exception as e:
             return Response({'error': f'Error parsing document: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+class AddCommentView(APIView):
+    def post(self, request):
+        document_id = request.data.get('document_id')
+        paragraph_id = request.data.get('paragraph_id')
+        author = request.data.get('author', 'Anonymous')
+        text = request.data.get('text', '')
+        
+        if not all([document_id, paragraph_id, text]):
+            return Response({'error': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            document = Document.objects.get(id=document_id)
+            paragraph = Paragraph.objects.get(document=document, paragraph_id=paragraph_id)
+            
+            # Creating comment in database
+            comment_id = Comment.objects.filter(document=document).count() + 1
+            comment = Comment.objects.create(
+                document=document,
+                paragraph=paragraph,
+                comment_id=comment_id,
+                author=author,
+                text=text
+            )
+            
+            # Update the docx file just saving comment in DB for now
+            # In real project we need to modify the actual docx file here
+            
+            return Response({
+                'id': comment.comment_id,
+                'author': comment.author,
+                'text': comment.text,
+                'paragraph_id': paragraph.paragraph_id
+            })
+            
+        except Document.DoesNotExist:
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Paragraph.DoesNotExist:
+            return Response({'error': 'Paragraph not found'}, status=status.HTTP_404_NOT_FOUND)
