@@ -123,3 +123,52 @@ class AddCommentView(APIView):
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
         except Paragraph.DoesNotExist:
             return Response({'error': 'Paragraph not found'}, status=status.HTTP_404_NOT_FOUND)
+
+class ExportDocumentView(APIView):
+    def get(self, request, document_id):
+        try:
+            document = Document.objects.get(id=document_id)
+            
+            # For this we'll just return the original file
+            # In a full project we need to create a new docx with comments
+            if os.path.exists(document.file_path):
+                response = FileResponse(
+                    open(document.file_path, 'rb'),
+                    as_attachment=True,
+                    filename=f"updated_{document.filename}"
+                )
+                return response
+            else:
+                return Response({'error': 'File not found'}, status=status.HTTP_404_NOT_FOUND)
+                
+        except Document.DoesNotExist:
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+
+class GetDocumentView(APIView):
+    def get(self, request, document_id):
+        try:
+            document = Document.objects.get(id=document_id)
+            
+            paragraphs_data = []
+            for para in document.paragraphs.all().order_by('paragraph_id'):
+                paragraphs_data.append({
+                    'id': para.paragraph_id,
+                    'text': para.text
+                })
+            
+            comments_data = []
+            for comment in document.comments.all():
+                comments_data.append({
+                    'id': comment.comment_id,
+                    'author': comment.author,
+                    'text': comment.text,
+                    'paragraph_id': comment.paragraph.paragraph_id
+                })
+            
+            return Response({
+                'paragraphs': paragraphs_data,
+                'comments': comments_data
+            })
+            
+        except Document.DoesNotExist:
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
