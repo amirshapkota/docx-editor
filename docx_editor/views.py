@@ -6,6 +6,7 @@ import shutil
 from datetime import datetime
 from django.conf import settings
 from django.http import JsonResponse, FileResponse
+from django.db import models
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -169,6 +170,342 @@ class UploadDocumentView(APIView):
             return Response({'error': f'Error parsing document: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class EditParagraphView(APIView):
+    """New view for editing paragraph text"""
+    def put(self, request):
+        document_id = request.data.get('document_id')
+        paragraph_id = request.data.get('paragraph_id')
+        new_text = request.data.get('text', '')
+        
+        if not all([document_id, paragraph_id]):
+            return Response({'error': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            document = Document.objects.get(id=document_id)
+            paragraph = Paragraph.objects.get(document=document, paragraph_id=paragraph_id)
+            
+            # Update paragraph text in database
+            paragraph.text = new_text
+            paragraph.save()
+            
+            # Update paragraph text in DOCX file
+            self.update_paragraph_in_docx(document.file_path, paragraph_id, new_text)
+            
+            return Response({
+                'paragraph_id': paragraph.paragraph_id,
+                'text': paragraph.text
+            })
+            
+        except Document.DoesNotExist:
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Paragraph.DoesNotExist:
+            return Response({'error': 'Paragraph not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"Error editing paragraph: {e}")
+            return Response({'error': f'Error editing paragraph: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def update_paragraph_in_docx(self, file_path, paragraph_id, new_text):
+        """Update paragraph text in the DOCX file"""
+        try:
+            # Create a backup
+            backup_path = file_path + '.backup'
+            shutil.copy2(file_path, backup_path)
+            
+            # Extract the DOCX
+            temp_dir = file_path + '_temp'
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+            
+            # Update document.xml
+            document_path = os.path.join(temp_dir, 'word', 'document.xml')
+            
+            if not os.path.exists(document_path):
+                raise Exception("Document.xml not found")
+            
+            ET.register_namespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
+            
+            tree = ET.parse(document_path)
+            root = tree.getroot()
+            
+            namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+            
+            # Find and update the target paragraph
+            paragraphs = root.findall('.//w:p', namespaces)
+            paragraph_counter = 0
+            
+            for para in paragraphs:
+                # Check if paragraph has text content
+                para_text = ""
+                for t in para.findall('.//w:t', namespaces):
+                    if t.text:
+                        para_text += t.text
+                
+                if para_text.strip():
+                    paragraph_counter += 1
+                    
+                    if paragraph_counter == paragraph_id:
+                        # Clear existing text elements but preserve structure
+                        runs = para.findall('.//w:r', namespaces)
+                        
+                        # Remove all text elements from runs
+                        for run in runs:
+                            text_elements = run.findall('.//w:t', namespaces)
+                            for text_elem in text_elements:
+                                run.remove(text_elem)
+                        
+                        # If no runs exist, create one
+                        if not runs:
+                            new_run = ET.SubElement(para, '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
+                            runs = [new_run]
+                        
+                        # Add new text to the first run
+                        if new_text.strip():
+                            first_run = runs[0]
+                            new_text_elem = ET.SubElement(first_run, '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
+                            new_text_elem.text = new_text
+                            
+                            # Add xml:space="preserve" if text has leading/trailing spaces
+                            if new_text != new_text.strip():
+                                new_text_elem.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+                        
+                        break
+            
+            tree.write(document_path, encoding='utf-8', xml_declaration=True)
+            
+            # Recreate the DOCX file
+            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
+                for root_dir, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path_full = os.path.join(root_dir, file)
+                        arc_name = os.path.relpath(file_path_full, temp_dir)
+                        zip_ref.write(file_path_full, arc_name)
+            
+            shutil.rmtree(temp_dir)
+            os.remove(backup_path)
+            
+        except Exception as e:
+            # Restore backup if something went wrong
+            if os.path.exists(backup_path):
+                shutil.copy2(backup_path, file_path)
+                os.remove(backup_path)
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            raise e
+
+
+class AddParagraphView(APIView):
+    """New view for adding paragraphs"""
+    def post(self, request):
+        document_id = request.data.get('document_id')
+        text = request.data.get('text', '')
+        position = request.data.get('position')  # Optional: insert at specific position
+        
+        if not all([document_id, text]):
+            return Response({'error': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            document = Document.objects.get(id=document_id)
+            
+            # Determine the new paragraph ID
+            if position:
+                # Insert at specific position - need to update IDs of following paragraphs
+                new_paragraph_id = position
+                # Update existing paragraphs with IDs >= position
+                Paragraph.objects.filter(document=document, paragraph_id__gte=position).update(
+                    paragraph_id=models.F('paragraph_id') + 1
+                )
+            else:
+                # Add at the end
+                last_paragraph = Paragraph.objects.filter(document=document).order_by('-paragraph_id').first()
+                new_paragraph_id = (last_paragraph.paragraph_id + 1) if last_paragraph else 1
+            
+            # Create paragraph in database
+            paragraph = Paragraph.objects.create(
+                document=document,
+                paragraph_id=new_paragraph_id,
+                text=text
+            )
+            
+            # Add paragraph to DOCX file
+            self.add_paragraph_to_docx(document.file_path, new_paragraph_id, text, position)
+            
+            return Response({
+                'paragraph_id': paragraph.paragraph_id,
+                'text': paragraph.text
+            })
+            
+        except Document.DoesNotExist:
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"Error adding paragraph: {e}")
+            return Response({'error': f'Error adding paragraph: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def add_paragraph_to_docx(self, file_path, paragraph_id, text, position=None):
+        try:
+            # Create a backup
+            backup_path = file_path + '.backup'
+            shutil.copy2(file_path, backup_path)
+            
+            # Extract the DOCX
+            temp_dir = file_path + '_temp'
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+            
+            # Update document.xml
+            document_path = os.path.join(temp_dir, 'word', 'document.xml')
+            
+            ET.register_namespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
+            
+            tree = ET.parse(document_path)
+            root = tree.getroot()
+            
+            namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+            
+            # Create new paragraph element
+            new_para = ET.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p')
+            new_run = ET.SubElement(new_para, '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
+            new_text_elem = ET.SubElement(new_run, '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
+            new_text_elem.text = text
+            
+            # Find the body element
+            body = root.find('.//w:body', namespaces)
+            if body is None:
+                raise Exception("Document body not found")
+            
+            if position:
+                # Insert at specific position
+                paragraphs = body.findall('w:p', namespaces)
+                if position <= len(paragraphs):
+                    body.insert(position - 1, new_para)
+                else:
+                    body.append(new_para)
+            else:
+                # Add at the end
+                body.append(new_para)
+            
+            tree.write(document_path, encoding='utf-8', xml_declaration=True)
+            
+            # Recreate the DOCX file
+            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
+                for root_dir, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path_full = os.path.join(root_dir, file)
+                        arc_name = os.path.relpath(file_path_full, temp_dir)
+                        zip_ref.write(file_path_full, arc_name)
+            
+            shutil.rmtree(temp_dir)
+            os.remove(backup_path)
+            
+        except Exception as e:
+            # Restore backup if something went wrong
+            if os.path.exists(backup_path):
+                shutil.copy2(backup_path, file_path)
+                os.remove(backup_path)
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            raise e
+
+
+class DeleteParagraphView(APIView):
+    def delete(self, request):
+        document_id = request.data.get('document_id')
+        paragraph_id = request.data.get('paragraph_id')
+        
+        if not all([document_id, paragraph_id]):
+            return Response({'error': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            document = Document.objects.get(id=document_id)
+            paragraph = Paragraph.objects.get(document=document, paragraph_id=paragraph_id)
+            
+            # Delete associated comments first
+            Comment.objects.filter(paragraph=paragraph).delete()
+            
+            # Delete paragraph from DOCX file
+            self.delete_paragraph_from_docx(document.file_path, paragraph_id)
+            
+            # Delete paragraph from database
+            paragraph.delete()
+            
+            # Update paragraph IDs for paragraphs that come after the deleted one
+            Paragraph.objects.filter(document=document, paragraph_id__gt=paragraph_id).update(
+                paragraph_id=models.F('paragraph_id') - 1
+            )
+            
+            return Response({'message': 'Paragraph deleted successfully'})
+            
+        except Document.DoesNotExist:
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Paragraph.DoesNotExist:
+            return Response({'error': 'Paragraph not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"Error deleting paragraph: {e}")
+            return Response({'error': f'Error deleting paragraph: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def delete_paragraph_from_docx(self, file_path, paragraph_id):
+        """Delete a paragraph from the DOCX file"""
+        try:
+            # Create a backup
+            backup_path = file_path + '.backup'
+            shutil.copy2(file_path, backup_path)
+            
+            # Extract the DOCX
+            temp_dir = file_path + '_temp'
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+            
+            # Update document.xml
+            document_path = os.path.join(temp_dir, 'word', 'document.xml')
+            
+            ET.register_namespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
+            
+            tree = ET.parse(document_path)
+            root = tree.getroot()
+            
+            namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+            
+            # Find and delete the target paragraph
+            paragraphs = root.findall('.//w:p', namespaces)
+            paragraph_counter = 0
+            
+            for para in paragraphs:
+                # Check if paragraph has text content
+                para_text = ""
+                for t in para.findall('.//w:t', namespaces):
+                    if t.text:
+                        para_text += t.text
+                
+                if para_text.strip():
+                    paragraph_counter += 1
+                    
+                    if paragraph_counter == paragraph_id:
+                        # Find the parent and remove this paragraph
+                        parent = para.getparent()
+                        if parent is not None:
+                            parent.remove(para)
+                        break
+            
+            tree.write(document_path, encoding='utf-8', xml_declaration=True)
+            
+            # Recreate the DOCX file
+            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
+                for root_dir, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path_full = os.path.join(root_dir, file)
+                        arc_name = os.path.relpath(file_path_full, temp_dir)
+                        zip_ref.write(file_path_full, arc_name)
+            
+            shutil.rmtree(temp_dir)
+            os.remove(backup_path)
+            
+        except Exception as e:
+            # Restore backup if something went wrong
+            if os.path.exists(backup_path):
+                shutil.copy2(backup_path, file_path)
+                os.remove(backup_path)
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            raise e
 class AddCommentView(APIView):
     def post(self, request):
         document_id = request.data.get('document_id')
