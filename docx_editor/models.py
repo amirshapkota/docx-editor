@@ -4,6 +4,7 @@ class Document(models.Model):
     filename = models.CharField(max_length=255)
     file_path = models.CharField(max_length=500)
     uploaded_at = models.DateTimeField(auto_now_add=True)
+    is_editable = models.BooleanField(default=False)  # False means comment-only
     
     def __str__(self):
         return self.filename
@@ -25,6 +26,7 @@ class Comment(models.Model):
     comment_id = models.IntegerField()
     author = models.CharField(max_length=100)
     text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
     
     def __str__(self):
         return f"Comment by {self.author}: {self.text[:30]}"

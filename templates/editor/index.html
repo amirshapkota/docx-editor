@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Editor</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles_new.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Document Editor</h1>
+            <div id="upload-section">
+                <div class="upload-area" id="uploadArea">
+                    <p>Drop a .docx file here or click to select</p>
+                    <input type="file" id="fileInput" accept=".docx" class="file-input">
+                    <button id="uploadBtn" class="btn">Upload Document</button>
+                </div>
+            </div>
+            <div id="status" class="status hidden"></div>
+        </div>
+        
+        <div class="main-content">
+            <div class="document-panel">
+                <div class="toolbar" id="toolbar" style="display: none;">
+                    <span class="save-status" id="saveStatus">Ready</span>
+                </div>
+                
+                <div id="document-content">
+                    <div class="loading">Upload a document to start editing</div>
+                </div>
+            </div>
+            
+            <div class="comments-panel">
+                <h3>Comments</h3>
+                <div class="comments-list" id="commentsList">
+                    <div class="loading">No comments yet</div>
+                </div>
+                
+                <div class="add-comment-form" id="addCommentForm" style="display: none;">
+                    <h4>Add Comment</h4>
+                    <div class="form-group">
+                        <label for="paragraphSelect">Select Paragraph:</label>
+                        <select id="paragraphSelect" class="form-control">
+                            <option value="">Click on a paragraph...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="authorInput">Author:</label>
+                        <input type="text" id="authorInput" class="form-control" placeholder="Your name" value="Anonymous">
+                    </div>
+                    <div class="form-group">
+                        <label for="commentInput">Comment:</label>
+                        <textarea id="commentInput" class="form-control" rows="3" placeholder="Enter your comment..."></textarea>
+                    </div>
+                    <button id="saveCommentBtn" class="btn">Save Comment</button>
+                </div>
+                
+                <div id="export-section" style="display: none; margin-top: 20px;">
+                    <button id="exportBtn" class="btn">Export Document</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="deleteModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Confirm Delete</h3>
+                <span class="close" id="closeModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete this paragraph?</p>
+                <p><strong id="paragraphPreview"></strong></p>
+                <p><small>This action cannot be undone. Any comments on this paragraph will also be deleted.</small></p>
+            </div>
+            <div class="modal-footer">
+                <button id="cancelDelete" class="btn" style="background: #6c757d;">Cancel</button>
+                <button id="confirmDelete" class="btn btn-danger" style="background: #dc3545;">Delete</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="/static/common.js"></script>
+    <script src="/static/editor.js"></script>
+</body>
+</html>

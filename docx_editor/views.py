@@ -1,16 +1,17 @@
 import os
-import uuid
-import zipfile
-import xml.etree.ElementTree as ET
 import shutil
+import uuid
+import xml.etree.ElementTree as ET
+import zipfile
 from datetime import datetime
 from django.conf import settings
-from django.http import JsonResponse, FileResponse
-from django.db import models
-from rest_framework.views import APIView
-from rest_framework.response import Response
+from django.db.models import Count
+from django.http import FileResponse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser
+from rest_framework.response import Response
+from rest_framework.views import APIView
 from docx import Document as DocxDocument
 from .models import Document, Paragraph, Comment
 from .serializers import DocumentSerializer
@@ -95,11 +96,19 @@ class UploadDocumentView(APIView):
 
     def post(self, request):
         if 'file' not in request.FILES:
-            return Response({'error': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'status': 'error',
+                'message': 'No file provided',
+                'code': 'no_file'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         file = request.FILES['file']
         if not file.name.endswith('.docx'):
-            return Response({'error': 'Only .docx files are allowed'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'status': 'error',
+                'message': 'Only .docx files are allowed',
+                'code': 'invalid_file_type'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         # Save file
         filename = f"{uuid.uuid4()}_{file.name}"
@@ -111,8 +120,13 @@ class UploadDocumentView(APIView):
                 destination.write(chunk)
 
         try:
+            # All documents are editable regardless of upload source
             doc = DocxDocument(file_path)
-            document = Document.objects.create(filename=file.name, file_path=file_path)
+            document = Document.objects.create(
+                filename=file.name,
+                file_path=file_path,
+                is_editable=True  # Make all documents editable
+            )
             
             paragraphs_data = []
             paragraph_objects = {}
@@ -158,9 +172,13 @@ class UploadDocumentView(APIView):
                     continue
         
             return Response({
-                'document_id': document.id,
-                'paragraphs': paragraphs_data,
-                'comments': comments_data
+                'status': 'success',
+                'message': 'Document uploaded successfully',
+                'data': {
+                    'document_id': document.id,
+                    'paragraphs': paragraphs_data,
+                    'comments': comments_data
+                }
             })
             
         except Exception as e:
@@ -348,7 +366,6 @@ class AddParagraphView(APIView):
             return Response({'error': f'Error adding paragraph: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def add_paragraph_to_docx(self, file_path, paragraph_id, text, position=None):
-        """Add paragraph to DOCX file with better error handling"""
         backup_path = None
         temp_dir = None
         
@@ -809,23 +826,68 @@ class AddCommentView(APIView):
             tree.write(rels_path, encoding='utf-8', xml_declaration=True)
 
 
+class ListDocumentsView(APIView):
+    def get(self, request):
+        # Show all documents in both interfaces
+        documents = Document.objects.all()
+            
+        # Add comment count and order by upload date
+        documents = documents.annotate(comment_count=Count('comments')).order_by('-uploaded_at')
+        
+        documents_data = []
+        for doc in documents:
+            documents_data.append({
+                'id': doc.id,
+                'filename': doc.filename,
+                'uploaded_at': doc.uploaded_at.isoformat(),
+                'comment_count': doc.comment_count
+            })
+        
+        return Response(documents_data)
+
 class ExportDocumentView(APIView):
     def get(self, request, document_id):
         try:
             document = Document.objects.get(id=document_id)
+            print(f"Exporting document {document_id}: {document.filename}")
+            print(f"File path: {document.file_path}")
+            
+            # Ensure filename has .docx extension
+            export_filename = document.filename
+            if not export_filename.lower().endswith('.docx'):
+                export_filename += '.docx'
+            
+            if not document.file_path:
+                return Response({'error': 'No file path saved for document'}, status=status.HTTP_404_NOT_FOUND)
             
             if os.path.exists(document.file_path):
-                response = FileResponse(
-                    open(document.file_path, 'rb'),
-                    as_attachment=True,
-                    filename=f"updated_{document.filename}"
-                )
-                return response
+                try:
+                    file = open(document.file_path, 'rb')
+                    response = FileResponse(
+                        file,
+                        as_attachment=True,
+                        filename=f"updated_{export_filename}",
+                        content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                    )
+                    return response
+                except PermissionError as e:
+                    print(f"Permission error: {str(e)}")
+                    return Response({'error': f'Permission denied: {str(e)}'}, status=status.HTTP_403_FORBIDDEN)
+                except Exception as e:
+                    print(f"File open error: {str(e)}")
+                    return Response({'error': f'Error opening file: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             else:
-                return Response({'error': 'File not found'}, status=status.HTTP_404_NOT_FOUND)
+                print(f"File not found at path: {document.file_path}")
+                return Response({
+                    'error': f'File not found at path: {document.file_path}'
+                }, status=status.HTTP_404_NOT_FOUND)
                 
         except Document.DoesNotExist:
-            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+            print(f"Document {document_id} not found in database")
+            return Response({'error': 'Document not found in database'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"Unexpected error in export: {str(e)}")
+            return Response({'error': f'Export error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class GetDocumentView(APIView):
