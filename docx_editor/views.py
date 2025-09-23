@@ -171,7 +171,6 @@ class UploadDocumentView(APIView):
 
 
 class EditParagraphView(APIView):
-    """New view for editing paragraph text"""
     def put(self, request):
         document_id = request.data.get('document_id')
         paragraph_id = request.data.get('paragraph_id')
@@ -205,7 +204,6 @@ class EditParagraphView(APIView):
             return Response({'error': f'Error editing paragraph: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def update_paragraph_in_docx(self, file_path, paragraph_id, new_text):
-        """Update paragraph text in the DOCX file"""
         try:
             # Create a backup
             backup_path = file_path + '.backup'
@@ -264,7 +262,6 @@ class EditParagraphView(APIView):
                             new_text_elem = ET.SubElement(first_run, '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
                             new_text_elem.text = new_text
                             
-                            # Add xml:space="preserve" if text has leading/trailing spaces
                             if new_text != new_text.strip():
                                 new_text_elem.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
                         
@@ -294,26 +291,33 @@ class EditParagraphView(APIView):
 
 
 class AddParagraphView(APIView):
-    """New view for adding paragraphs"""
     def post(self, request):
         document_id = request.data.get('document_id')
         text = request.data.get('text', '')
         position = request.data.get('position')  # Optional: insert at specific position
         
-        if not all([document_id, text]):
-            return Response({'error': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
+        if not document_id:
+            return Response({'error': 'Document ID is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Allow empty text for new paragraphs
+        if text is None:
+            text = ''
         
         try:
             document = Document.objects.get(id=document_id)
             
             # Determine the new paragraph ID
-            if position:
-                # Insert at specific position - need to update IDs of following paragraphs
+            if position and position > 0:
                 new_paragraph_id = position
                 # Update existing paragraphs with IDs >= position
-                Paragraph.objects.filter(document=document, paragraph_id__gte=position).update(
-                    paragraph_id=models.F('paragraph_id') + 1
-                )
+                paragraphs_to_update = Paragraph.objects.filter(
+                    document=document, 
+                    paragraph_id__gte=position
+                ).order_by('-paragraph_id')  # Order by descending to avoid conflicts
+                
+                for para in paragraphs_to_update:
+                    para.paragraph_id += 1
+                    para.save()
             else:
                 # Add at the end
                 last_paragraph = Paragraph.objects.filter(document=document).order_by('-paragraph_id').first()
@@ -331,16 +335,23 @@ class AddParagraphView(APIView):
             
             return Response({
                 'paragraph_id': paragraph.paragraph_id,
-                'text': paragraph.text
-            })
+                'text': paragraph.text,
+                'message': 'Paragraph added successfully'
+            }, status=status.HTTP_201_CREATED)
             
         except Document.DoesNotExist:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             print(f"Error adding paragraph: {e}")
+            import traceback
+            traceback.print_exc()  # for debigging
             return Response({'error': f'Error adding paragraph: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def add_paragraph_to_docx(self, file_path, paragraph_id, text, position=None):
+        """Add paragraph to DOCX file with better error handling"""
+        backup_path = None
+        temp_dir = None
+        
         try:
             # Create a backup
             backup_path = file_path + '.backup'
@@ -348,12 +359,20 @@ class AddParagraphView(APIView):
             
             # Extract the DOCX
             temp_dir = file_path + '_temp'
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+                
             with zipfile.ZipFile(file_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_dir)
             
             # Update document.xml
             document_path = os.path.join(temp_dir, 'word', 'document.xml')
             
+            if not os.path.exists(document_path):
+                raise Exception(f"Document.xml not found at {document_path}")
+            
+            # Register namespace to preserve XML structure
+            ET.register_namespace('', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
             ET.register_namespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
             
             tree = ET.parse(document_path)
@@ -361,24 +380,41 @@ class AddParagraphView(APIView):
             
             namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
             
-            # Create new paragraph element
-            new_para = ET.Element('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p')
-            new_run = ET.SubElement(new_para, '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}r')
-            new_text_elem = ET.SubElement(new_run, '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
-            new_text_elem.text = text
+            # Create new paragraph element with proper namespace
+            w_ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+            new_para = ET.Element(f'{w_ns}p')
+            new_run = ET.SubElement(new_para, f'{w_ns}r')
+            new_text_elem = ET.SubElement(new_run, f'{w_ns}t')
+            new_text_elem.text = text if text.strip() else ' '  # Ensure at least a space
             
             # Find the body element
             body = root.find('.//w:body', namespaces)
             if body is None:
                 raise Exception("Document body not found")
             
-            if position:
+            if position and position > 0:
                 # Insert at specific position
-                paragraphs = body.findall('w:p', namespaces)
-                if position <= len(paragraphs):
-                    body.insert(position - 1, new_para)
-                else:
-                    body.append(new_para)
+                all_paragraphs = body.findall('w:p', namespaces)
+                
+                # Count only non-empty paragraphs to match our numbering system
+                non_empty_count = 0
+                insert_index = len(all_paragraphs)  # Default to end
+                
+                for i, para in enumerate(all_paragraphs):
+                    # Check if paragraph has text content
+                    para_text = ""
+                    for t in para.findall('.//w:t', namespaces):
+                        if t.text:
+                            para_text += t.text
+                    
+                    if para_text.strip():
+                        non_empty_count += 1
+                        
+                    if non_empty_count == position - 1:
+                        insert_index = i + 1
+                        break
+                
+                body.insert(insert_index, new_para)
             else:
                 # Add at the end
                 body.append(new_para)
@@ -386,22 +422,25 @@ class AddParagraphView(APIView):
             tree.write(document_path, encoding='utf-8', xml_declaration=True)
             
             # Recreate the DOCX file
-            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
+            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zip_ref:
                 for root_dir, dirs, files in os.walk(temp_dir):
                     for file in files:
                         file_path_full = os.path.join(root_dir, file)
                         arc_name = os.path.relpath(file_path_full, temp_dir)
                         zip_ref.write(file_path_full, arc_name)
             
-            shutil.rmtree(temp_dir)
-            os.remove(backup_path)
+            # Cleanup
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            if backup_path and os.path.exists(backup_path):
+                os.remove(backup_path)
             
         except Exception as e:
             # Restore backup if something went wrong
-            if os.path.exists(backup_path):
+            if backup_path and os.path.exists(backup_path):
                 shutil.copy2(backup_path, file_path)
                 os.remove(backup_path)
-            if os.path.exists(temp_dir):
+            if temp_dir and os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
             raise e
 
@@ -443,7 +482,6 @@ class DeleteParagraphView(APIView):
             return Response({'error': f'Error deleting paragraph: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete_paragraph_from_docx(self, file_path, paragraph_id):
-        """Delete a paragraph from the DOCX file"""
         try:
             # Create a backup
             backup_path = file_path + '.backup'
