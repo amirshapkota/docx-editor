@@ -445,6 +445,9 @@ class AddParagraphView(APIView):
                         file_path_full = os.path.join(root_dir, file)
                         arc_name = os.path.relpath(file_path_full, temp_dir)
                         zip_ref.write(file_path_full, arc_name)
+                zip_ref.close()
+            import time
+            time.sleep(0.5)  # Ensure file system has settled
             
             # Cleanup
             if temp_dir and os.path.exists(temp_dir):
