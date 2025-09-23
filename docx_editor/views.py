@@ -457,21 +457,54 @@ class DeleteParagraphView(APIView):
             document = Document.objects.get(id=document_id)
             paragraph = Paragraph.objects.get(document=document, paragraph_id=paragraph_id)
             
-            # Delete associated comments first
-            Comment.objects.filter(paragraph=paragraph).delete()
+            # Check if this is the last paragraph
+            total_paragraphs = Paragraph.objects.filter(document=document).count()
+            if total_paragraphs <= 1:
+                return Response({'error': 'Cannot delete the last paragraph'}, status=status.HTTP_400_BAD_REQUEST)
             
-            # Delete paragraph from DOCX file
+            # Delete associated comments first
+            deleted_comments = Comment.objects.filter(paragraph=paragraph)
+            comment_count = deleted_comments.count()
+            deleted_comments.delete()
+            
+            # Delete paragraph from DOCX file first (so we can restore if DB update fails)
             self.delete_paragraph_from_docx(document.file_path, paragraph_id)
             
             # Delete paragraph from database
             paragraph.delete()
             
             # Update paragraph IDs for paragraphs that come after the deleted one
-            Paragraph.objects.filter(document=document, paragraph_id__gt=paragraph_id).update(
-                paragraph_id=models.F('paragraph_id') - 1
+            paragraphs_to_update = Paragraph.objects.filter(
+                document=document, 
+                paragraph_id__gt=paragraph_id
+            ).order_by('paragraph_id')
+            
+            for para in paragraphs_to_update:
+                para.paragraph_id -= 1
+                para.save()
+            
+            # Also update comment references
+            comments_to_update = Comment.objects.filter(
+                document=document,
+                paragraph__paragraph_id__gt=paragraph_id - 1  # After the shift
             )
             
-            return Response({'message': 'Paragraph deleted successfully'})
+            for comment in comments_to_update:
+                # Find the paragraph with the updated ID
+                try:
+                    comment.paragraph = Paragraph.objects.get(
+                        document=document,
+                        paragraph_id=comment.paragraph.paragraph_id
+                    )
+                    comment.save()
+                except Paragraph.DoesNotExist:
+                    comment.delete()  # Remove orphaned comments
+            
+            return Response({
+                'message': 'Paragraph deleted successfully',
+                'deleted_comments': comment_count,
+                'updated_paragraphs': paragraphs_to_update.count()
+            })
             
         except Document.DoesNotExist:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -479,9 +512,14 @@ class DeleteParagraphView(APIView):
             return Response({'error': 'Paragraph not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             print(f"Error deleting paragraph: {e}")
+            import traceback
+            traceback.print_exc()
             return Response({'error': f'Error deleting paragraph: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def delete_paragraph_from_docx(self, file_path, paragraph_id):
+        backup_path = None
+        temp_dir = None
+        
         try:
             # Create a backup
             backup_path = file_path + '.backup'
@@ -489,12 +527,20 @@ class DeleteParagraphView(APIView):
             
             # Extract the DOCX
             temp_dir = file_path + '_temp'
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+                
             with zipfile.ZipFile(file_path, 'r') as zip_ref:
                 zip_ref.extractall(temp_dir)
             
             # Update document.xml
             document_path = os.path.join(temp_dir, 'word', 'document.xml')
             
+            if not os.path.exists(document_path):
+                raise Exception(f"Document.xml not found at {document_path}")
+            
+            # Register namespaces
+            ET.register_namespace('', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
             ET.register_namespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
             
             tree = ET.parse(document_path)
@@ -502,11 +548,17 @@ class DeleteParagraphView(APIView):
             
             namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
             
-            # Find and delete the target paragraph
-            paragraphs = root.findall('.//w:p', namespaces)
-            paragraph_counter = 0
+            # Find the body element first
+            body = root.find('.//w:body', namespaces)
+            if body is None:
+                raise Exception("Document body not found")
             
-            for para in paragraphs:
+            # Find and delete the target paragraph
+            paragraphs = body.findall('w:p', namespaces)  # Direct children of body
+            paragraph_counter = 0
+            paragraph_deleted = False
+            
+            for i, para in enumerate(paragraphs):
                 # Check if paragraph has text content
                 para_text = ""
                 for t in para.findall('.//w:t', namespaces):
@@ -517,33 +569,41 @@ class DeleteParagraphView(APIView):
                     paragraph_counter += 1
                     
                     if paragraph_counter == paragraph_id:
-                        # Find the parent and remove this paragraph
-                        parent = para.getparent()
-                        if parent is not None:
-                            parent.remove(para)
+                        # Remove this paragraph from the body
+                        body.remove(para)
+                        paragraph_deleted = True
+                        print(f"Deleted paragraph {paragraph_id} at position {i}")
                         break
             
+            if not paragraph_deleted:
+                raise Exception(f"Paragraph {paragraph_id} not found in document")
+            
+            # Write the updated XML
             tree.write(document_path, encoding='utf-8', xml_declaration=True)
             
             # Recreate the DOCX file
-            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
+            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zip_ref:
                 for root_dir, dirs, files in os.walk(temp_dir):
                     for file in files:
                         file_path_full = os.path.join(root_dir, file)
                         arc_name = os.path.relpath(file_path_full, temp_dir)
                         zip_ref.write(file_path_full, arc_name)
             
-            shutil.rmtree(temp_dir)
-            os.remove(backup_path)
+            # Cleanup
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            if backup_path and os.path.exists(backup_path):
+                os.remove(backup_path)
             
         except Exception as e:
             # Restore backup if something went wrong
-            if os.path.exists(backup_path):
+            if backup_path and os.path.exists(backup_path):
                 shutil.copy2(backup_path, file_path)
                 os.remove(backup_path)
-            if os.path.exists(temp_dir):
+            if temp_dir and os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
             raise e
+        
 class AddCommentView(APIView):
     def post(self, request):
         document_id = request.data.get('document_id')

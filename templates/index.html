@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Docx Comment Editor</title>
+    <title>Docx Text Editor</title>
     <style>
         * {
             margin: 0;
@@ -45,6 +45,7 @@
             border-radius: 8px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
             overflow-y: auto;
+            position: relative;
         }
         
         .comments-panel {
@@ -93,26 +94,166 @@
             cursor: not-allowed;
         }
         
-        .paragraph {
-            padding: 10px;
-            margin: 5px 0;
-            border-left: 3px solid transparent;
+        .btn-small {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
             cursor: pointer;
-            transition: all 0.3s;
+            font-size: 12px;
+            margin: 1px;
+        }
+
+        .btn-small:hover {
+            background: #0056b3;
+        }
+
+        .btn-small.btn-danger {
+            background: #dc3545;
+        }
+
+        .btn-small.btn-danger:hover {
+            background: #c82333;
+        }
+
+        .btn-small.btn-warning {
+            background: #ffc107;
+            color: #212529;
+        }
+
+        .btn-small.btn-warning:hover {
+            background: #e0a800;
         }
         
-        .paragraph:hover {
-            background: #f8f9fa;
+        .editor-container {
+            position: relative;
+            min-height: 400px;
         }
         
-        .paragraph.selected {
-            background: #e3f2fd;
-            border-left-color: #007bff;
+        .paragraph-marker {
+            position: absolute;
+            left: -30px;
+            width: 20px;
+            height: 20px;
+            background: #007bff;
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.3s;
         }
         
-        .paragraph.highlighted {
-            background: #fff3cd;
-            border-left-color: #ffc107;
+        .paragraph-wrapper {
+            position: relative;
+            margin: 10px 0;
+            padding: 5px 0;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+        
+        .paragraph-wrapper:hover {
+            background-color: rgba(0, 123, 255, 0.05);
+        }
+        
+        .paragraph-wrapper:hover .paragraph-marker,
+        .paragraph-wrapper:hover .paragraph-actions {
+            opacity: 1;
+        }
+        
+        .paragraph-wrapper.selected {
+            background-color: rgba(0, 123, 255, 0.1);
+            border-left: 3px solid #007bff;
+            padding-left: 10px;
+        }
+        
+        .paragraph-content {
+            outline: none;
+            border: none;
+            background: transparent;
+            width: 100%;
+            font-family: 'Times New Roman', serif;
+            font-size: 12pt;
+            line-height: 1.5;
+            resize: none;
+            min-height: 24px;
+            padding: 2px;
+            border-radius: 3px;
+            transition: background-color 0.2s;
+        }
+        
+        .paragraph-content:focus {
+            background-color: #f8f9fa;
+        }
+        
+        .paragraph-content:empty::before {
+            content: 'Click to start typing...';
+            color: #999;
+            font-style: italic;
+        }
+        
+        .insert-line {
+            height: 2px;
+            background: #007bff;
+            margin: 5px 0;
+            opacity: 0;
+            transition: opacity 0.3s;
+            cursor: pointer;
+            position: relative;
+        }
+        
+        .insert-line:hover {
+            opacity: 1;
+        }
+        
+        .insert-line::before {
+            content: '+ Add paragraph';
+            position: absolute;
+            left: 10px;
+            top: -10px;
+            background: #007bff;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            white-space: nowrap;
+        }
+        
+        .insert-line:hover::before {
+            opacity: 1;
+        }
+        
+        .toolbar {
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .save-status {
+            margin-left: auto;
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .save-status.saving {
+            color: #007bff;
+        }
+        
+        .save-status.saved {
+            color: #28a745;
+        }
+        
+        .save-status.error {
+            color: #dc3545;
         }
         
         .comment {
@@ -172,6 +313,7 @@
         .comments-list {
             flex: 1;
             margin-bottom: 20px;
+            overflow-y: auto;
         }
         
         .status {
@@ -201,12 +343,81 @@
             padding: 20px;
             color: #666;
         }
+        
+        .paragraph-actions {
+            position: absolute;
+            right: -80px;
+            top: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 10;
+        }
+
+        /* Confirmation modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            border-radius: 8px;
+            width: 400px;
+            max-width: 90%;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .modal-title {
+            margin: 0;
+            color: #333;
+        }
+
+        .close {
+            color: #aaa;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            color: black;
+        }
+
+        .modal-body {
+            margin-bottom: 20px;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>Docx Comment Editor</h1>
+            <h1>Docx Text Editor</h1>
             <div id="upload-section">
                 <div class="upload-area" id="uploadArea">
                     <p>Drop a .docx file here or click to select</p>
@@ -219,6 +430,10 @@
         
         <div class="main-content">
             <div class="document-panel">
+                <div class="toolbar" id="toolbar" style="display: none;">
+                    <span class="save-status" id="saveStatus">Ready</span>
+                </div>
+                
                 <div id="document-content">
                     <div class="loading">Upload a document to start editing</div>
                 </div>
@@ -235,7 +450,7 @@
                     <div class="form-group">
                         <label for="paragraphSelect">Select Paragraph:</label>
                         <select id="paragraphSelect" class="form-control">
-                            <option value="">Select a paragraph...</option>
+                            <option value="">Click on a paragraph...</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -250,21 +465,43 @@
                 </div>
                 
                 <div id="export-section" style="display: none; margin-top: 20px;">
-                    <button id="exportBtn" class="btn">Export Updated Document</button>
+                    <button id="exportBtn" class="btn">Export Document</button>
                 </div>
             </div>
         </div>
     </div>
 
+    <!-- Delete Confirmation Modal -->
+    <div id="deleteModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Confirm Delete</h3>
+                <span class="close" id="closeModal">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete this paragraph?</p>
+                <p><strong id="paragraphPreview"></strong></p>
+                <p><small>This action cannot be undone. Any comments on this paragraph will also be deleted.</small></p>
+            </div>
+            <div class="modal-footer">
+                <button id="cancelDelete" class="btn" style="background: #6c757d;">Cancel</button>
+                <button id="confirmDelete" class="btn btn-danger" style="background: #dc3545;">Delete</button>
+            </div>
+        </div>
+    </div>
+
     <script>
-        class DocxCommentEditor {
+        class DocxTextEditor {
             constructor() {
                 this.currentDocumentId = null;
                 this.paragraphs = [];
                 this.comments = [];
                 this.selectedParagraphId = null;
+                this.saveTimeout = null;
+                this.pendingDeleteId = null;
                 
                 this.initEventListeners();
+                window.docEditor = this;
             }
             
             initEventListeners() {
@@ -296,11 +533,23 @@
                     }
                 });
                 
-                // Add comment
+                // Comments
                 document.getElementById('saveCommentBtn').addEventListener('click', () => this.addComment());
                 
                 // Export
                 document.getElementById('exportBtn').addEventListener('click', () => this.exportDocument());
+
+                // Delete modal
+                document.getElementById('closeModal').addEventListener('click', () => this.hideDeleteModal());
+                document.getElementById('cancelDelete').addEventListener('click', () => this.hideDeleteModal());
+                document.getElementById('confirmDelete').addEventListener('click', () => this.confirmDelete());
+                
+                // Close modal when clicking outside
+                document.getElementById('deleteModal').addEventListener('click', (e) => {
+                    if (e.target.id === 'deleteModal') {
+                        this.hideDeleteModal();
+                    }
+                });
             }
             
             async handleFileSelect() {
@@ -334,12 +583,13 @@
                     this.paragraphs = data.paragraphs;
                     this.comments = data.comments;
                     
-                    this.renderDocument();
+                    this.renderEditor();
                     this.renderComments();
+                    this.showToolbar();
                     this.showCommentForm();
                     this.showExportButton();
                     
-                    this.showStatus('Document uploaded successfully!', 'success');
+                    this.showStatus('Document loaded successfully!', 'success');
                     
                 } catch (error) {
                     console.error('Upload error:', error);
@@ -347,50 +597,392 @@
                 }
             }
             
-            renderDocument() {
+            renderEditor() {
                 const container = document.getElementById('document-content');
                 container.innerHTML = '';
                 
-                this.paragraphs.forEach(para => {
-                    const paraElement = document.createElement('div');
-                    paraElement.className = 'paragraph';
-                    paraElement.textContent = para.text;
-                    paraElement.dataset.paragraphId = para.id;
+                const editorContainer = document.createElement('div');
+                editorContainer.className = 'editor-container';
+                
+                // Add insert line at the beginning
+                this.createInsertLine(editorContainer, 0);
+                
+                this.paragraphs.forEach((para, index) => {
+                    const paraWrapper = this.createParagraphWrapper(para, index);
+                    editorContainer.appendChild(paraWrapper);
                     
-                    paraElement.addEventListener('click', () => {
-                        // Remove previous selections
-                        document.querySelectorAll('.paragraph.selected').forEach(el => {
-                            el.classList.remove('selected');
-                        });
-                        
-                        // Select this paragraph
-                        paraElement.classList.add('selected');
-                        this.selectedParagraphId = para.id;
-                        
-                        // Update dropdown
-                        document.getElementById('paragraphSelect').value = para.id;
-                    });
-                    
-                    container.appendChild(paraElement);
+                    // Add insert line after each paragraph
+                    this.createInsertLine(editorContainer, para.id);
                 });
                 
-                // Populate paragraph dropdown
+                container.appendChild(editorContainer);
+                this.updateCommentDropdown();
+            }
+            
+            createParagraphWrapper(para, index) {
+                const wrapper = document.createElement('div');
+                wrapper.className = 'paragraph-wrapper';
+                wrapper.dataset.paragraphId = para.id;
+                
+                // Paragraph marker
+                const marker = document.createElement('div');
+                marker.className = 'paragraph-marker';
+                marker.textContent = para.id;
+                marker.addEventListener('click', () => this.selectParagraph(para.id));
+                wrapper.appendChild(marker);
+                
+                // Paragraph content (editable)
+                const content = document.createElement('div');
+                content.className = 'paragraph-content';
+                content.contentEditable = true;
+                content.textContent = para.text;
+                content.dataset.paragraphId = para.id;
+                
+                // Auto-resize and save on input
+                content.addEventListener('input', (e) => {
+                    this.scheduleAutoSave(para.id, content.textContent);
+                });
+                
+                content.addEventListener('focus', () => {
+                    this.selectParagraph(para.id);
+                });
+                
+                content.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        this.insertParagraphAfter(para.id);
+                    } else if (e.key === 'Backspace' && content.textContent === '' && this.paragraphs.length > 1) {
+                        e.preventDefault();
+                        this.showDeleteModal(para.id);
+                    }
+                });
+                
+                wrapper.appendChild(content);
+                
+                // Paragraph actions
+                const actions = document.createElement('div');
+                actions.className = 'paragraph-actions';
+                
+                // Delete button
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn-small btn-danger';
+                deleteBtn.innerHTML = '&times;';
+                deleteBtn.title = 'Delete paragraph';
+                deleteBtn.addEventListener('click', () => this.showDeleteModal(para.id));
+                actions.appendChild(deleteBtn);
+                
+                // Duplicate button
+                const duplicateBtn = document.createElement('button');
+                duplicateBtn.className = 'btn-small btn-warning';
+                duplicateBtn.innerHTML = '&#9783;';
+                duplicateBtn.title = 'Duplicate paragraph';
+                duplicateBtn.addEventListener('click', () => this.duplicateParagraph(para.id));
+                actions.appendChild(duplicateBtn);
+                
+                wrapper.appendChild(actions);
+                
+                return wrapper;
+            }
+            
+            createInsertLine(container, afterParagraphId) {
+                const insertLine = document.createElement('div');
+                insertLine.className = 'insert-line';
+                insertLine.addEventListener('click', () => {
+                    this.insertParagraphAfter(afterParagraphId);
+                });
+                container.appendChild(insertLine);
+            }
+            
+            selectParagraph(paragraphId) {
+                // Remove previous selections
+                document.querySelectorAll('.paragraph-wrapper').forEach(wrapper => {
+                    wrapper.classList.remove('selected');
+                });
+                
+                // Select current paragraph
+                const wrapper = document.querySelector(`[data-paragraph-id="${paragraphId}"]`);
+                if (wrapper) {
+                    wrapper.classList.add('selected');
+                }
+                
+                this.selectedParagraphId = paragraphId;
+                document.getElementById('paragraphSelect').value = paragraphId;
+            }
+            
+            async insertParagraphAfter(afterParagraphId) {
+                const position = afterParagraphId === 0 ? 1 : afterParagraphId + 1;
+                
+                try {
+                    const response = await fetch('/api/add_paragraph/', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            document_id: this.currentDocumentId,
+                            text: '',
+                            position: position
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Failed to add paragraph');
+                    }
+                    
+                    // Update local data
+                    this.paragraphs.forEach(p => {
+                        if (p.id >= position) {
+                            p.id += 1;
+                        }
+                    });
+                    
+                    this.paragraphs.push({
+                        id: position,
+                        text: ''
+                    });
+                    
+                    this.paragraphs.sort((a, b) => a.id - b.id);
+                    
+                    // Update comment paragraph IDs
+                    this.comments.forEach(c => {
+                        if (c.paragraph_id >= position) {
+                            c.paragraph_id += 1;
+                        }
+                    });
+                    
+                    this.renderEditor();
+                    this.renderComments();
+                    
+                    // Focus on the new paragraph
+                    setTimeout(() => {
+                        const newParagraph = document.querySelector(`[data-paragraph-id="${position}"] .paragraph-content`);
+                        if (newParagraph) {
+                            newParagraph.focus();
+                        }
+                    }, 100);
+                    
+                    this.showStatus('Paragraph added successfully', 'success');
+                    
+                } catch (error) {
+                    console.error('Error adding paragraph:', error);
+                    this.showStatus(`Error adding paragraph: ${error.message}`, 'error');
+                }
+            }
+            
+            async duplicateParagraph(paragraphId) {
+                const paragraph = this.paragraphs.find(p => p.id === paragraphId);
+                if (!paragraph) return;
+                
+                try {
+                    const position = paragraphId + 1;
+                    
+                    const response = await fetch('/api/add_paragraph/', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            document_id: this.currentDocumentId,
+                            text: paragraph.text,
+                            position: position
+                        })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to duplicate paragraph');
+                    }
+                    
+                    // Update local data similar to insertParagraphAfter
+                    this.paragraphs.forEach(p => {
+                        if (p.id >= position) {
+                            p.id += 1;
+                        }
+                    });
+                    
+                    this.paragraphs.push({
+                        id: position,
+                        text: paragraph.text
+                    });
+                    
+                    this.paragraphs.sort((a, b) => a.id - b.id);
+                    
+                    this.comments.forEach(c => {
+                        if (c.paragraph_id >= position) {
+                            c.paragraph_id += 1;
+                        }
+                    });
+                    
+                    this.renderEditor();
+                    this.renderComments();
+                    
+                    this.showStatus('Paragraph duplicated successfully', 'success');
+                    
+                } catch (error) {
+                    console.error('Error duplicating paragraph:', error);
+                    this.showStatus(`Error duplicating paragraph: ${error.message}`, 'error');
+                }
+            }
+            
+            showDeleteModal(paragraphId) {
+                const paragraph = this.paragraphs.find(p => p.id === paragraphId);
+                if (!paragraph) return;
+                
+                if (this.paragraphs.length <= 1) {
+                    this.showStatus('Cannot delete the last paragraph', 'error');
+                    return;
+                }
+                
+                this.pendingDeleteId = paragraphId;
+                
+                // Update modal content
+                const preview = document.getElementById('paragraphPreview');
+                const previewText = paragraph.text.substring(0, 100);
+                preview.textContent = previewText + (paragraph.text.length > 100 ? '...' : '');
+                
+                // Show modal
+                document.getElementById('deleteModal').style.display = 'block';
+            }
+            
+            hideDeleteModal() {
+                document.getElementById('deleteModal').style.display = 'none';
+                this.pendingDeleteId = null;
+            }
+            
+            async confirmDelete() {
+                if (!this.pendingDeleteId) return;
+                
+                try {
+                    const response = await fetch('/api/delete_paragraph/', {
+                        method: 'DELETE',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            document_id: this.currentDocumentId,
+                            paragraph_id: this.pendingDeleteId
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Failed to delete paragraph');
+                    }
+                    
+                    // Update local data
+                    const deletedId = this.pendingDeleteId;
+                    
+                    this.paragraphs = this.paragraphs.filter(p => p.id !== deletedId);
+                    this.paragraphs.forEach(p => {
+                        if (p.id > deletedId) {
+                            p.id -= 1;
+                        }
+                    });
+                    
+                    this.comments = this.comments.filter(c => c.paragraph_id !== deletedId);
+                    this.comments.forEach(c => {
+                        if (c.paragraph_id > deletedId) {
+                            c.paragraph_id -= 1;
+                        }
+                    });
+                    
+                    this.renderEditor();
+                    this.renderComments();
+                    
+                    this.hideDeleteModal();
+                    
+                    let message = 'Paragraph deleted successfully';
+                    if (data.deleted_comments > 0) {
+                        message += ` (${data.deleted_comments} comment${data.deleted_comments > 1 ? 's' : ''} also deleted)`;
+                    }
+                    this.showStatus(message, 'success');
+                    
+                } catch (error) {
+                    console.error('Error deleting paragraph:', error);
+                    this.showStatus(`Error deleting paragraph: ${error.message}`, 'error');
+                    this.hideDeleteModal();
+                }
+            }
+            
+            scheduleAutoSave(paragraphId, text) {
+                this.setSaveStatus('saving');
+                
+                if (this.saveTimeout) {
+                    clearTimeout(this.saveTimeout);
+                }
+                
+                this.saveTimeout = setTimeout(async () => {
+                    try {
+                        await this.saveParagraph(paragraphId, text);
+                        this.setSaveStatus('saved');
+                        
+                        setTimeout(() => {
+                            this.setSaveStatus('ready');
+                        }, 2000);
+                        
+                    } catch (error) {
+                        this.setSaveStatus('error');
+                        console.error('Auto-save error:', error);
+                    }
+                }, 1000);
+            }
+            
+            async saveParagraph(paragraphId, text) {
+                const response = await fetch('/api/edit_paragraph/', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        document_id: this.currentDocumentId,
+                        paragraph_id: paragraphId,
+                        text: text
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to save paragraph');
+                }
+                
+                const paraIndex = this.paragraphs.findIndex(p => p.id === paragraphId);
+                if (paraIndex !== -1) {
+                    this.paragraphs[paraIndex].text = text;
+                }
+            }
+            
+            setSaveStatus(status) {
+                const statusElement = document.getElementById('saveStatus');
+                statusElement.className = 'save-status';
+                
+                switch (status) {
+                    case 'saving':
+                        statusElement.textContent = 'Saving...';
+                        statusElement.classList.add('saving');
+                        break;
+                    case 'saved':
+                        statusElement.textContent = 'Saved';
+                        statusElement.classList.add('saved');
+                        break;
+                    case 'error':
+                        statusElement.textContent = 'Error saving';
+                        statusElement.classList.add('error');
+                        break;
+                    default:
+                        statusElement.textContent = 'Ready';
+                }
+            }
+            
+            updateCommentDropdown() {
                 const select = document.getElementById('paragraphSelect');
-                select.innerHTML = '<option value="">Select a paragraph...</option>';
+                select.innerHTML = '<option value="">Click on a paragraph...</option>';
                 
                 this.paragraphs.forEach(para => {
                     const option = document.createElement('option');
                     option.value = para.id;
                     option.textContent = `${para.id}. ${para.text.substring(0, 50)}${para.text.length > 50 ? '...' : ''}`;
                     select.appendChild(option);
-                });
-                
-                select.addEventListener('change', () => {
-                    const paragraphId = parseInt(select.value);
-                    if (paragraphId) {
-                        this.highlightParagraph(paragraphId);
-                        this.selectedParagraphId = paragraphId;
-                    }
                 });
             }
             
@@ -413,30 +1005,11 @@
                     `;
                     
                     commentElement.addEventListener('click', () => {
-                        this.highlightParagraph(comment.paragraph_id);
+                        this.selectParagraph(comment.paragraph_id);
                     });
                     
                     container.appendChild(commentElement);
                 });
-            }
-            
-            highlightParagraph(paragraphId) {
-                // Remove previous highlights
-                document.querySelectorAll('.paragraph.highlighted').forEach(el => {
-                    el.classList.remove('highlighted');
-                });
-                
-                // Highlight target paragraph
-                const paraElement = document.querySelector(`[data-paragraph-id="${paragraphId}"]`);
-                if (paraElement) {
-                    paraElement.classList.add('highlighted');
-                    paraElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    
-                    // Remove highlight after 3 seconds
-                    setTimeout(() => {
-                        paraElement.classList.remove('highlighted');
-                    }, 3000);
-                }
             }
             
             async addComment() {
@@ -472,13 +1045,6 @@
                     
                     // Clear form
                     document.getElementById('commentInput').value = '';
-                    document.getElementById('paragraphSelect').value = '';
-                    this.selectedParagraphId = null;
-                    
-                    // Remove selection
-                    document.querySelectorAll('.paragraph.selected').forEach(el => {
-                        el.classList.remove('selected');
-                    });
                     
                     this.renderComments();
                     this.showStatus('Comment added successfully!', 'success');
@@ -503,7 +1069,7 @@
                     const url = window.URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `updated_document.docx`;
+                    a.download = `edited_document.docx`;
                     document.body.appendChild(a);
                     a.click();
                     document.body.removeChild(a);
@@ -515,6 +1081,10 @@
                     console.error('Export error:', error);
                     this.showStatus('Error exporting document', 'error');
                 }
+            }
+            
+            showToolbar() {
+                document.getElementById('toolbar').style.display = 'flex';
             }
             
             showCommentForm() {
@@ -539,7 +1109,7 @@
         
         // Initialize the application
         document.addEventListener('DOMContentLoaded', () => {
-            new DocxCommentEditor();
+            new DocxTextEditor();
         });
     </script>
 </body>
