@@ -4,6 +4,7 @@ class DocxBase {
         this.paragraphs = [];
         this.comments = [];
         this.unsavedChanges = false;
+        this.selectedParagraphId = null;
         
         this.initUI();
         this.initWindowEvents();
@@ -128,8 +129,9 @@ class DocxBase {
         try {
             const isEditor = window.location.pathname.startsWith('/editor/');
             const documentPath = isEditor ? `/editor/api/document/${documentId}/` : `/commenter/api/document/${documentId}/`;
+            const timestamp = new Date().getTime();
             
-            const response = await fetch(documentPath);
+            const response = await fetch(documentPath + '?t=' + timestamp);
             const data = await response.json();
             
             if (!response.ok) {
@@ -162,11 +164,77 @@ class DocxBase {
         
         const content = document.createElement('div');
         content.className = 'paragraph-content';
-        content.textContent = para.text;
+        
+        // Use HTML content if available, otherwise fall back to plain text
+        if (para.html_content && para.html_content.trim()) {
+            content.innerHTML = para.html_content;
+            
+            // Make images clickable for viewing
+            const images = content.querySelectorAll('.document-image');
+            images.forEach(img => {
+                img.addEventListener('click', () => this.showImageModal(img));
+                img.style.cursor = 'pointer';
+                img.style.maxWidth = '100%';
+                img.style.height = 'auto';
+            });
+        } else if (para.text && para.text.trim()) {
+            content.textContent = para.text;
+        } else {
+            content.innerHTML = '<em style="color: #666;">Empty paragraph</em>';
+        }
+        
+        // Add click handler for paragraph selection
+        content.addEventListener('click', () => {
+            this.selectParagraph(para.id);
+        });
         
         wrapper.appendChild(content);
         
         return wrapper;
+    }
+    
+    showImageModal(img) {
+        // Create a modal to show the full-size image
+        const modal = document.createElement('div');
+        modal.className = 'image-modal';
+        modal.innerHTML = `
+            <div class="image-modal-content">
+                <span class="close-modal">&times;</span>
+                <img src="${img.src}" alt="${img.alt}" style="max-width: 90%; max-height: 90%;">
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Close modal handlers
+        const closeBtn = modal.querySelector('.close-modal');
+        closeBtn.addEventListener('click', () => document.body.removeChild(modal));
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                document.body.removeChild(modal);
+            }
+        });
+    }
+    
+    selectParagraph(paragraphId) {
+        // Remove previous selection
+        document.querySelectorAll('.paragraph-wrapper').forEach(el => {
+            el.classList.remove('selected');
+        });
+        
+        // Select current paragraph
+        const wrapper = document.querySelector(`[data-id="${paragraphId}"]`);
+        if (wrapper) {
+            wrapper.classList.add('selected');
+        }
+        
+        // Update paragraph select dropdown
+        const select = document.getElementById('paragraphSelect');
+        if (select) {
+            select.value = paragraphId;
+        }
+        
+        this.selectedParagraphId = paragraphId;
     }
     
     renderDocument() {

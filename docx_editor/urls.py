@@ -12,4 +12,5 @@ urlpatterns = [
     path('api/add_paragraph/', views.AddParagraphView.as_view(), name='add_paragraph'),
     path('api/delete_paragraph/', views.DeleteParagraphView.as_view(), name='delete_paragraph'),    
     path('api/add_comment/', views.AddCommentView.as_view(), name='add_comment'),
+    path('api/image/<int:image_id>/', views.ServeImageView.as_view(), name='serve_image'),
 ]

@@ -13,7 +13,7 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from docx import Document as DocxDocument
-from .models import Document, Paragraph, Comment
+from .models import Document, Paragraph, Comment, DocumentImage
 from .serializers import DocumentSerializer
 
 class UploadDocumentView(APIView):
@@ -120,29 +120,26 @@ class UploadDocumentView(APIView):
                 destination.write(chunk)
 
         try:
-            # All documents are editable regardless of upload source
-            doc = DocxDocument(file_path)
+            # Create document instance
             document = Document.objects.create(
                 filename=file.name,
                 file_path=file_path,
                 is_editable=True  # Make all documents editable
             )
             
-            paragraphs_data = []
-            paragraph_objects = {}
+            # Use enhanced parser
+            from .docx_parser import EnhancedDocxParser
+            parser = EnhancedDocxParser(file_path, document)
+            paragraphs_data = parser.parse_document()
             
-            for i, para in enumerate(doc.paragraphs):
-                if para.text.strip():
-                    paragraph = Paragraph.objects.create(
-                        document=document,
-                        paragraph_id=i + 1,
-                        text=para.text
-                    )
-                    paragraph_objects[i + 1] = paragraph
-                    paragraphs_data.append({
-                        'id': i + 1,
-                        'text': para.text
-                    })
+            # Build paragraph objects dictionary for comment linking
+            paragraph_objects = {}
+            for para_data in paragraphs_data:
+                paragraph = Paragraph.objects.get(
+                    document=document,
+                    paragraph_id=para_data['id']
+                )
+                paragraph_objects[para_data['id']] = paragraph
 
             comments_data = []
             extracted_comments = self.extract_comments_from_docx(file_path)
@@ -900,10 +897,26 @@ class GetDocumentView(APIView):
             
             paragraphs_data = []
             for para in document.paragraphs.all().order_by('paragraph_id'):
-                paragraphs_data.append({
+                para_data = {
                     'id': para.paragraph_id,
-                    'text': para.text
-                })
+                    'text': para.text,
+                    'html_content': para.html_content,
+                    'has_images': para.has_images
+                }
+                
+                # Add image information if paragraph has images
+                if para.has_images:
+                    images = []
+                    for para_img in para.paragraph_images.all():
+                        images.append({
+                            'id': para_img.document_image.id,
+                            'filename': para_img.document_image.filename,
+                            'image_id': para_img.document_image.image_id,
+                            'position': para_img.position_in_paragraph
+                        })
+                    para_data['images'] = images
+                
+                paragraphs_data.append(para_data)
             
             comments_data = []
             for comment in document.comments.all():
@@ -921,3 +934,24 @@ class GetDocumentView(APIView):
             
         except Document.DoesNotExist:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class ServeImageView(APIView):
+    def get(self, request, image_id):
+        """Serve document images"""
+        try:
+            image = DocumentImage.objects.get(id=image_id)
+            
+            if os.path.exists(image.file_path):
+                response = FileResponse(
+                    open(image.file_path, 'rb'),
+                    content_type=image.content_type
+                )
+                return response
+            else:
+                return Response({'error': 'Image file not found'}, status=status.HTTP_404_NOT_FOUND)
+                
+        except DocumentImage.DoesNotExist:
+            return Response({'error': 'Image not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({'error': f'Error serving image: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

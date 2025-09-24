@@ -45,10 +45,26 @@ class EditDocumentView(APIView):
         
         paragraphs_data = []
         for para in document.paragraphs.all().order_by('paragraph_id'):
-            paragraphs_data.append({
+            para_data = {
                 'id': para.paragraph_id,
-                'text': para.text
-            })
+                'text': para.text,
+                'html_content': para.html_content,
+                'has_images': para.has_images
+            }
+            
+            # Add image information if paragraph has images
+            if para.has_images:
+                images = []
+                for para_img in para.paragraph_images.all():
+                    images.append({
+                        'id': para_img.document_image.id,
+                        'filename': para_img.document_image.filename,
+                        'image_id': para_img.document_image.image_id,
+                        'position': para_img.position_in_paragraph
+                    })
+                para_data['images'] = images
+            
+            paragraphs_data.append(para_data)
         
         comments_data = []
         for comment in document.comments.all():

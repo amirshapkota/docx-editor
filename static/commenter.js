@@ -1,56 +1,28 @@
 /**
  * DocxCommenter class handles the commenting interface for DOCX documents.
- * Manages document listing, viewing, and commenting functionality.
+ * Extends DocxBase to inherit common functionality including image rendering.
  */
-class DocxCommenter {
+class DocxCommenter extends DocxBase {
     /**
      * Initialize the DocxCommenter instance.
      * Sets up initial state and event listeners.
      */
     constructor() {
-        // State management
-        this.currentDocumentId = null;
-        this.paragraphs = [];
-        this.comments = [];
-        this.selectedParagraphId = null;
+        super(); // Initialize DocxBase
         
-        // Initialize components
-        this.initEventListeners();
+        // Additional initialization for commenter
         this.initExportButton();
         this.loadDocumentsList();
     }
-    
-    initEventListeners() {
-        // File upload
-        const fileInput = document.getElementById('fileInput');
-        const uploadBtn = document.getElementById('uploadBtn');
-        const uploadArea = document.getElementById('uploadArea');
+
+    initUI() {
+        super.initUI(); // Initialize base UI components
         
-        fileInput.addEventListener('change', () => this.handleFileSelect());
-        uploadBtn.addEventListener('click', () => fileInput.click());
-        
-        // Drag and drop
-        uploadArea.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            uploadArea.classList.add('dragover');
-        });
-        
-        uploadArea.addEventListener('dragleave', () => {
-            uploadArea.classList.remove('dragover');
-        });
-        
-        uploadArea.addEventListener('drop', (e) => {
-            e.preventDefault();
-            uploadArea.classList.remove('dragover');
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                fileInput.files = files;
-                this.handleFileSelect();
-            }
-        });
-        
-        // Comments
-        document.getElementById('saveCommentBtn').addEventListener('click', () => this.addComment());
+        // Add commenter-specific event listeners
+        const saveCommentBtn = document.getElementById('saveCommentBtn');
+        if (saveCommentBtn) {
+            saveCommentBtn.addEventListener('click', () => this.addComment());
+        }
     }
 
     async loadDocumentsList() {
@@ -68,22 +40,12 @@ class DocxCommenter {
 
     async loadDocument(documentId) {
         try {
-            const response = await fetch(`/commenter/api/document/${documentId}/`);
-            if (!response.ok) {
-                throw new Error('Failed to load document');
-            }
+            // Use base loadDocument method
+            await super.loadDocument(documentId);
             
-            const data = await response.json();
-            this.currentDocumentId = documentId;
-            this.paragraphs = data.paragraphs;
-            this.comments = data.comments;
-            
-            this.renderDocument();
-            this.renderComments();
+            // Add commenter-specific functionality
             this.showCommentForm();
             this.showExportButton();
-            
-            this.showStatus('Document loaded successfully!', 'success');
             
         } catch (error) {
             this.showStatus(`Error loading document: ${error.message}`, 'error');
@@ -276,25 +238,17 @@ class DocxCommenter {
     }
     
     renderDocument() {
-        const container = document.getElementById('document-content');
-        container.innerHTML = '';
+        // Use base renderDocument method which handles images
+        super.renderDocument();
         
-        this.paragraphs.forEach((para) => {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'paragraph-wrapper';
-            wrapper.dataset.paragraphId = para.id;
-            
-            const content = document.createElement('div');
-            content.className = 'paragraph-content';
-            content.textContent = para.text;
-            
-            wrapper.appendChild(content);
-            wrapper.addEventListener('click', () => this.selectParagraph(para.id));
-            
-            container.appendChild(wrapper);
-        });
-        
+        // Add commenter-specific functionality
         this.updateCommentDropdown();
+        
+        // Add click handlers for paragraph selection
+        document.querySelectorAll('.paragraph-wrapper').forEach(wrapper => {
+            const paragraphId = parseInt(wrapper.dataset.id);
+            wrapper.addEventListener('click', () => this.selectParagraph(paragraphId));
+        });
     }
     
     selectParagraph(paragraphId) {
@@ -302,7 +256,7 @@ class DocxCommenter {
             wrapper.classList.remove('selected');
         });
         
-        const wrapper = document.querySelector(`[data-paragraph-id="${paragraphId}"]`);
+        const wrapper = document.querySelector(`[data-id="${paragraphId}"]`);
         if (wrapper) {
             wrapper.classList.add('selected');
         }
