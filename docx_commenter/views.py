@@ -1,6 +1,8 @@
 import os
 from django.conf import settings
 from django.http import FileResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -8,6 +10,7 @@ from rest_framework.parsers import MultiPartParser
 from docx_editor.models import Document, Paragraph, Comment, DocumentImage
 from docx_editor.views import UploadDocumentView as BaseUploadView
 from docx_editor.views import AddCommentView as BaseAddCommentView
+from docx_editor.views import DeleteCommentView as BaseDeleteCommentView
 from docx_editor.serializers import DocumentSerializer
 
 class CommentUploadDocumentView(BaseUploadView):
@@ -92,10 +95,34 @@ class AddCommentView(BaseAddCommentView):
         # Use the base comment functionality
         return super().post(request)
 
+
+@method_decorator(csrf_exempt, name='dispatch')
+class DeleteCommentView(BaseDeleteCommentView):
+    def delete(self, request):
+        # Parse JSON data from request body for DELETE requests
+        try:
+            import json
+            data = json.loads(request.body.decode('utf-8'))
+            document_id = data.get('document_id')
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return Response({'error': 'Invalid JSON in request body'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Allow deleting comments from any document
+            document = Document.objects.get(id=document_id)
+        except Document.DoesNotExist:
+            return Response({'error': 'Document not found'}, 
+                          status=status.HTTP_404_NOT_FOUND)
+        
+        # Use the base delete functionality
+        return super().delete(request)
+
+
 class ExportDocumentView(APIView):
     def get(self, request, document_id):
         try:
-            document = Document.objects.get(id=document_id, is_editable=False)
+            # Allow export of any document from commenter
+            document = Document.objects.get(id=document_id)
             
             if os.path.exists(document.file_path):
                 response = FileResponse(
@@ -109,7 +136,7 @@ class ExportDocumentView(APIView):
                               status=status.HTTP_404_NOT_FOUND)
                 
         except Document.DoesNotExist:
-            return Response({'error': 'Document not found or not accessible'}, 
+            return Response({'error': 'Document not found'}, 
                           status=status.HTTP_404_NOT_FOUND)
 
 

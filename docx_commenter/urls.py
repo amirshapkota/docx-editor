@@ -14,5 +14,6 @@ urlpatterns = [
     path('api/document/<int:document_id>/', views.ViewDocumentView.as_view(), name='view_document'),
     path('api/document/<int:document_id>/export/', views.ExportDocumentView.as_view(), name='export'),
     path('api/add_comment/', views.AddCommentView.as_view(), name='add_comment'),
+    path('api/delete_comment/', views.DeleteCommentView.as_view(), name='delete_comment'),
     path('api/image/<int:image_id>/', views.ServeImageView.as_view(), name='serve_image'),
 ]

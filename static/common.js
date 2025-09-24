@@ -348,12 +348,30 @@ class DocxBase {
             minute: '2-digit'
         });
         
-        header.innerHTML = `
-            <span class="comment-author">${comment.author}</span>
-            <span class="comment-date" title="Created on ${formattedDate} at ${formattedTime}">
-                ${formattedDate} ${formattedTime}
-            </span>
-        `;
+        // Create header with author and date
+        const authorSpan = document.createElement('span');
+        authorSpan.className = 'comment-author';
+        authorSpan.textContent = comment.author;
+        
+        const dateSpan = document.createElement('span');
+        dateSpan.className = 'comment-date';
+        dateSpan.title = `Created on ${formattedDate} at ${formattedTime}`;
+        dateSpan.textContent = `${formattedDate} ${formattedTime}`;
+        
+        // Create delete button
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'comment-delete-btn';
+        deleteBtn.innerHTML = '×';
+        deleteBtn.title = 'Delete comment';
+        deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.deleteComment(comment.id);
+        });
+        
+        // Assemble header
+        header.appendChild(authorSpan);
+        header.appendChild(dateSpan);
+        header.appendChild(deleteBtn);
         
         const content = document.createElement('div');
         content.className = 'comment-content';
@@ -363,5 +381,44 @@ class DocxBase {
         element.appendChild(content);
         
         return element;
+    }
+
+    async deleteComment(commentId) {
+        if (!confirm('Are you sure you want to delete this comment?')) {
+            return;
+        }
+
+        try {
+            const isEditor = window.location.pathname.startsWith('/editor/');
+            const apiPath = isEditor ? '/editor/api/delete_comment/' : '/commenter/api/delete_comment/';
+            
+            const response = await fetch(apiPath, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    document_id: this.currentDocumentId,
+                    comment_id: commentId
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to delete comment');
+            }
+            
+            // Remove comment from local data
+            this.comments = this.comments.filter(c => c.id !== commentId);
+            
+            // Re-render comments
+            this.renderComments();
+            
+            this.showStatus('Comment deleted successfully', 'success');
+            
+        } catch (error) {
+            console.error('Error deleting comment:', error);
+            this.showStatus('Error deleting comment: ' + error.message, 'error');
+        }
     }
 }

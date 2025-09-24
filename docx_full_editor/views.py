@@ -12,7 +12,9 @@ from docx_editor.views import (
     EditParagraphView as BaseEditParagraphView,
     AddParagraphView as BaseAddParagraphView,
     DeleteParagraphView as BaseDeleteParagraphView,
-    AddCommentView as BaseAddCommentView
+    AddCommentView as BaseAddCommentView,
+    DeleteCommentView as BaseDeleteCommentView,
+    XMLFormattingMixin
 )
 from .utils import make_document_editable
 
@@ -85,13 +87,13 @@ class EditDocumentView(APIView):
 
 class EditParagraphView(BaseEditParagraphView):
     def put(self, request):
-        document_id = request.data.get('document_id')
-        document = make_document_editable(document_id)
-        if not document:
-            return Response({'error': 'Document not found'}, 
-                          status=status.HTTP_404_NOT_FOUND)
-        
+        # Let the base class handle the full request processing
+        # We'll override the document lookup to make it editable
         return super().put(request)
+    
+    def get_document(self, document_id):
+        """Override document lookup to make it editable"""
+        return make_document_editable(document_id)
 
 class AddParagraphView(BaseAddParagraphView):
     def post(self, request):
@@ -105,6 +107,7 @@ class AddParagraphView(BaseAddParagraphView):
 
 class DeleteParagraphView(BaseDeleteParagraphView):
     def delete(self, request):
+        # First ensure document is editable using the parsed data
         document_id = request.data.get('document_id')
         document = make_document_editable(document_id)
         if not document:
@@ -162,3 +165,8 @@ class ExportDocumentView(APIView):
             print(f"Unexpected error in export: {str(e)}")
             return Response({'error': f'Export error: {str(e)}'}, 
                           status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DeleteCommentView(BaseDeleteCommentView):
+    """Delete comment view for the full editor (inherits from base which already has XML formatting mixin)"""
+    pass

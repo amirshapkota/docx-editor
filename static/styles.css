@@ -294,17 +294,50 @@ body {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 8px;
+    gap: 8px;
 }
 
 .comment-author {
     font-weight: bold;
     color: #007bff;
     font-size: 13px;
+    flex-shrink: 0;
 }
 
 .comment-date {
     color: #666;
     font-size: 12px;
+    flex-grow: 1;
+    margin-left: 8px;
+}
+
+.comment-delete-btn {
+    background: #dc3545;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    width: 22px;
+    height: 22px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    opacity: 0.7;
+    transition: all 0.2s ease;
+}
+
+.comment-delete-btn:hover {
+    background: #c82333;
+    opacity: 1;
+    transform: scale(1.1);
+}
+
+.comment:hover .comment-delete-btn {
+    opacity: 1;
 }
 
 .comment-content {
@@ -635,6 +668,171 @@ body {
     text-decoration: underline;
 }
 
+/* Word-like document styling */
+#document-content {
+    background: white;
+    padding: 1in 1in; /* Standard document margins */
+    min-height: 11in; /* Letter height */
+    max-width: 8.5in; /* Letter width */
+    margin: 20px auto;
+    box-shadow: 0 0 20px rgba(0,0,0,0.15);
+    border-radius: 2px;
+    position: relative;
+}
+
+/* Word-like paragraph styling */
+.paragraph-wrapper {
+    position: relative;
+    margin: 0 0 12pt 0; /* Word-like paragraph spacing */
+    padding: 4px 0;
+    border-radius: 2px;
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+}
+
+.paragraph-wrapper:hover {
+    background-color: rgba(0, 123, 255, 0.03);
+    border-color: rgba(0, 123, 255, 0.05);
+}
+
+.paragraph-wrapper.highlighted,
+.paragraph-wrapper.selected {
+    background-color: rgba(0, 123, 255, 0.08);
+    border-left: 3px solid #007bff;
+    padding-left: 8px;
+    margin-left: -11px;
+}
+
+.paragraph-content {
+    font-family: 'Times New Roman', 'Times', serif;
+    font-size: 12pt;
+    line-height: 1.15; /* Word default line spacing */
+    color: #000;
+    margin: 0;
+    padding: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    width: 100%;
+    text-align: justify;
+}
+
+.paragraph-content:focus {
+    background-color: rgba(0, 123, 255, 0.02);
+    border-radius: 2px;
+    padding: 2px 4px;
+}
+
+/* Paragraph content formatting */
+.paragraph-content p {
+    margin: 0 0 12pt 0;
+    text-align: justify;
+    text-indent: 0;
+}
+
+/* Headings styling */
+.paragraph-content h1 {
+    font-size: 16pt;
+    font-weight: bold;
+    margin: 24pt 0 12pt 0;
+    text-align: center;
+}
+
+.paragraph-content h2 {
+    font-size: 14pt;
+    font-weight: bold;
+    margin: 18pt 0 6pt 0;
+}
+
+.paragraph-content h3 {
+    font-size: 12pt;
+    font-weight: bold;
+    margin: 12pt 0 6pt 0;
+}
+
+/* Text formatting */
+.paragraph-content strong {
+    font-weight: bold;
+}
+
+.paragraph-content em {
+    font-style: italic;
+}
+
+.paragraph-content u {
+    text-decoration: underline;
+}
+
+/* Center alignment for titles */
+.paragraph-wrapper[data-align="center"] .paragraph-content,
+.paragraph-content[style*="text-align: center"],
+.paragraph-content p[style*="text-align: center"] {
+    text-align: center;
+}
+
+/* Document images in Word-like style */
+.document-image {
+    max-width: 100%;
+    height: auto;
+    margin: 12pt 0;
+    display: block;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+/* Center-aligned images */
+.paragraph-content p:has(.document-image),
+.paragraph-content:has(.document-image) {
+    text-align: center;
+}
+
+/* Images in centered paragraphs */
+p[style*="text-align: center"] .document-image {
+    display: block;
+    margin: 12pt auto;
+}
+
+/* Page-like container for both editor and commenter */
+.document-panel {
+    flex: 2;
+    background: #f5f5f5; /* Page background */
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    overflow-y: auto;
+    position: relative;
+}
+
+/* Responsive design for smaller screens */
+@media screen and (max-width: 1200px) {
+    #document-content {
+        max-width: 100%;
+        padding: 0.5in;
+        margin: 10px auto;
+    }
+    
+    .main-content {
+        flex-direction: column;
+    }
+    
+    .comments-panel {
+        max-width: none;
+        margin-top: 20px;
+    }
+}
+
+/* Print-like appearance for larger screens */
+@media screen and (min-width: 1200px) {
+    .main-content {
+        max-width: 1400px;
+        margin: 0 auto;
+    }
+    
+    #document-content {
+        font-size: 12pt;
+    }
+}
+
 .paragraph-content p {
     margin: 0 0 10px 0;
     line-height: 1.6;
@@ -646,4 +844,47 @@ body {
     color: #666;
     font-style: italic;
     padding: 20px;
+}
+
+/* Commenter-specific styles */
+body:has(h1:contains("Document Commenter")) .paragraph-wrapper,
+/* Alternative selector for browsers that don't support :has() */
+.container:has(h1:contains("Document Commenter")) .paragraph-wrapper {
+    border: none !important;
+}
+
+body:has(h1:contains("Document Commenter")) .paragraph-wrapper:hover,
+.container:has(h1:contains("Document Commenter")) .paragraph-wrapper:hover {
+    border: none !important;
+    background-color: rgba(0, 123, 255, 0.02);
+}
+
+body:has(h1:contains("Document Commenter")) .paragraph-wrapper.highlighted,
+body:has(h1:contains("Document Commenter")) .paragraph-wrapper.selected,
+.container:has(h1:contains("Document Commenter")) .paragraph-wrapper.highlighted,
+.container:has(h1:contains("Document Commenter")) .paragraph-wrapper.selected {
+    border: none !important;
+    border-left: none !important;
+    background-color: rgba(0, 123, 255, 0.05);
+    padding-left: 4px;
+    margin-left: 0;
+}
+
+/* Class-based approach for better browser compatibility */
+.commenter-page .paragraph-wrapper {
+    border: none !important;
+}
+
+.commenter-page .paragraph-wrapper:hover {
+    border: none !important;
+    background-color: rgba(0, 123, 255, 0.02);
+}
+
+.commenter-page .paragraph-wrapper.highlighted,
+.commenter-page .paragraph-wrapper.selected {
+    border: none !important;
+    border-left: none !important;
+    background-color: rgba(0, 123, 255, 0.05);
+    padding-left: 4px;
+    margin-left: 0;
 }

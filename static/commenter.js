@@ -288,17 +288,16 @@ class DocxCommenter extends DocxBase {
         container.innerHTML = '';
         
         this.comments.forEach(comment => {
-            const commentElement = document.createElement('div');
-            commentElement.className = 'comment';
-            commentElement.innerHTML = `
-                <div class="comment-author">${comment.author}</div>
-                <div class="comment-text">${comment.text}</div>
-                <div class="comment-para">Paragraph ${comment.paragraph_id}</div>
-            `;
+            // Use the createCommentElement from common.js which includes delete functionality
+            const commentElement = this.createCommentElement(comment);
             
-            commentElement.addEventListener('click', () => {
-                this.selectParagraph(comment.paragraph_id);
-            });
+            // Add commenter-specific click handler for paragraph selection
+            const commentContent = commentElement.querySelector('.comment-content');
+            if (commentContent) {
+                commentContent.addEventListener('click', () => {
+                    this.selectParagraph(comment.paragraph_id);
+                });
+            }
             
             container.appendChild(commentElement);
         });
@@ -401,9 +400,14 @@ class DocxCommenter extends DocxBase {
     showExportButton() {
         document.getElementById('export-section').style.display = 'block';
     }
+
+    // Override the API endpoint URL for commenter
+    getApiBaseUrl() {
+        return '/commenter/api/';
+    }
 }
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', () => {
-    new DocxCommenter();
+    window.docxApp = new DocxCommenter();
 });

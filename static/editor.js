@@ -507,5 +507,5 @@ class DocxEditor extends DocxBase {
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', () => {
-    new DocxEditor();
+    window.docxApp = new DocxEditor();
 });

@@ -8,6 +8,8 @@ from django.conf import settings
 from django.db.models import Count
 from django.http import FileResponse
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
@@ -15,6 +17,158 @@ from rest_framework.views import APIView
 from docx import Document as DocxDocument
 from .models import Document, Paragraph, Comment, DocumentImage
 from .serializers import DocumentSerializer
+
+
+class XMLFormattingMixin:
+    """Mixin class providing XML formatting methods for DOCX processing"""
+    
+    def _write_xml_with_proper_formatting(self, tree, file_path):
+        """Write XML with proper formatting to avoid corruption"""
+        try:
+            import xml.dom.minidom
+            
+            # First write to get XML content
+            rough_string = ET.tostring(tree.getroot(), encoding='unicode')
+            
+            # Add proper XML declaration for Word compatibility
+            xml_content = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + rough_string
+            
+            # Parse and prettify with minidom
+            dom = xml.dom.minidom.parseString(xml_content.encode('utf-8'))
+            pretty_xml = dom.toprettyxml(indent="  ", encoding='utf-8').decode('utf-8')
+            
+            # Clean up extra blank lines that minidom adds
+            lines = [line for line in pretty_xml.split('\n') if line.strip()]
+            clean_pretty_xml = '\n'.join(lines)
+            
+            # Ensure XML declaration is Word-compatible
+            if clean_pretty_xml.startswith('<?xml version="1.0" encoding="utf-8"?>'):
+                clean_pretty_xml = clean_pretty_xml.replace(
+                    '<?xml version="1.0" encoding="utf-8"?>',
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                )
+            elif clean_pretty_xml.startswith('<?xml version="1.0"?>'):
+                clean_pretty_xml = clean_pretty_xml.replace(
+                    '<?xml version="1.0"?>',
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                )
+            
+            # Write the properly formatted XML
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(clean_pretty_xml)
+                
+            # Verify the written XML is valid
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                ET.fromstring(content.encode('utf-8'))
+                print(f"Successfully wrote Word-compatible XML to {os.path.basename(file_path)}")
+            except ET.ParseError as e:
+                print(f"Warning: Generated XML may be malformed in {file_path}: {e}")
+                    
+        except Exception as e:
+            print(f"Error formatting XML for {file_path}: {e}")
+            print("Falling back to basic XML writing...")
+            # Fallback to basic writing
+            tree.write(file_path, encoding='utf-8', xml_declaration=True)
+
+    def _format_xml_file(self, file_path):
+        """Format an existing XML file to have proper indentation"""
+        try:
+            import xml.dom.minidom
+            
+            # Read the existing XML
+            with open(file_path, 'r', encoding='utf-8') as f:
+                xml_content = f.read()
+            
+            # Parse and prettify
+            dom = xml.dom.minidom.parseString(xml_content.encode('utf-8'))
+            pretty_xml = dom.toprettyxml(indent="  ", encoding='utf-8').decode('utf-8')
+            
+            # Clean up extra blank lines
+            lines = [line for line in pretty_xml.split('\n') if line.strip()]
+            clean_pretty_xml = '\n'.join(lines)
+            
+            # Ensure XML declaration is Word-compatible
+            if clean_pretty_xml.startswith('<?xml version="1.0" encoding="utf-8"?>'):
+                clean_pretty_xml = clean_pretty_xml.replace(
+                    '<?xml version="1.0" encoding="utf-8"?>',
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                )
+            elif clean_pretty_xml.startswith('<?xml version="1.0"?>'):
+                clean_pretty_xml = clean_pretty_xml.replace(
+                    '<?xml version="1.0"?>',
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                )
+            
+            # Write back the formatted XML
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(clean_pretty_xml)
+                
+            return True
+            
+        except Exception as e:
+            print(f"Error formatting {file_path}: {e}")
+            return False
+
+    def _recreate_docx_with_proper_xml_formatting(self, file_path, temp_dir):
+        """Recreate DOCX ensuring all XML files are properly formatted"""
+        try:
+            import xml.dom.minidom
+            
+            print("Formatting all XML files for Word compatibility...")
+            
+            # Find all XML files in the temp directory
+            xml_files = []
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    if file.endswith('.xml'):
+                        xml_files.append(os.path.join(root, file))
+            
+            print(f"Found {len(xml_files)} XML files to format")
+            
+            # Format each XML file
+            for xml_file in xml_files:
+                rel_path = os.path.relpath(xml_file, temp_dir).replace('\\', '/')
+                
+                # Check if file was already formatted by checking if it has proper indentation
+                try:
+                    with open(xml_file, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    # Check if already properly formatted (has multiple lines and indentation)
+                    if content.count('\n') > 5 and ('  <' in content or '    <' in content):
+                        print(f"  {rel_path}: Already properly formatted")
+                        continue
+                    
+                    # Format the file
+                    success = self._format_xml_file(xml_file)
+                    if success:
+                        print(f"  {rel_path}: Formatted successfully")
+                    else:
+                        print(f"  {rel_path}: Formatting failed, kept original")
+                        
+                except Exception as e:
+                    print(f"  {rel_path}: Error checking/formatting - {e}")
+            
+            print("Recreating DOCX with formatted XML files...")
+            
+            # Recreate the DOCX file
+            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as docx_out:
+                for root, dirs, files in os.walk(temp_dir):
+                    for file in files:
+                        file_path_full = os.path.join(root, file)
+                        # Use forward slashes for archive names (ZIP standard)
+                        archive_name = os.path.relpath(file_path_full, temp_dir).replace('\\', '/')
+                        docx_out.write(file_path_full, archive_name)
+            
+            print("DOCX recreation completed with properly formatted XML")
+            return True
+            
+        except Exception as e:
+            print(f"Error recreating DOCX with proper XML formatting: {e}")
+            return False
+
 
 class UploadDocumentView(APIView):
     parser_classes = [MultiPartParser]
@@ -185,7 +339,7 @@ class UploadDocumentView(APIView):
             return Response({'error': f'Error parsing document: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-class EditParagraphView(APIView):
+class EditParagraphView(XMLFormattingMixin, APIView):
     def put(self, request):
         document_id = request.data.get('document_id')
         paragraph_id = request.data.get('paragraph_id')
@@ -195,7 +349,14 @@ class EditParagraphView(APIView):
             return Response({'error': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            document = Document.objects.get(id=document_id)
+            # Use get_document method if available (for full editor), otherwise use direct lookup
+            if hasattr(self, 'get_document'):
+                document = self.get_document(document_id)
+                if not document:
+                    return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+            else:
+                document = Document.objects.get(id=document_id)
+            
             paragraph = Paragraph.objects.get(document=document, paragraph_id=paragraph_id)
             
             # Update paragraph text in database
@@ -220,6 +381,13 @@ class EditParagraphView(APIView):
 
     def update_paragraph_in_docx(self, file_path, paragraph_id, new_text):
         try:
+            # Debug: Check if method exists
+            if not hasattr(self, '_recreate_docx_with_proper_xml_formatting'):
+                print(f"ERROR: {self.__class__.__name__} does not have _recreate_docx_with_proper_xml_formatting method")
+                print(f"MRO: {[cls.__name__ for cls in self.__class__.__mro__]}")
+                # Fallback without XML formatting
+                raise AttributeError("XML formatting method not available")
+            
             # Create a backup
             backup_path = file_path + '.backup'
             shutil.copy2(file_path, backup_path)
@@ -284,13 +452,8 @@ class EditParagraphView(APIView):
             
             tree.write(document_path, encoding='utf-8', xml_declaration=True)
             
-            # Recreate the DOCX file
-            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
-                for root_dir, dirs, files in os.walk(temp_dir):
-                    for file in files:
-                        file_path_full = os.path.join(root_dir, file)
-                        arc_name = os.path.relpath(file_path_full, temp_dir)
-                        zip_ref.write(file_path_full, arc_name)
+            # Recreate the DOCX file with proper XML formatting for ALL files
+            self._recreate_docx_with_proper_xml_formatting(file_path, temp_dir)
             
             shutil.rmtree(temp_dir)
             os.remove(backup_path)
@@ -462,10 +625,16 @@ class AddParagraphView(APIView):
             raise e
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class DeleteParagraphView(APIView):
     def delete(self, request):
-        document_id = request.data.get('document_id')
-        paragraph_id = request.data.get('paragraph_id')
+        # Parse JSON data using DRF's request.data instead of raw request.body
+        try:
+            data = request.data
+            document_id = data.get('document_id')
+            paragraph_id = data.get('paragraph_id')
+        except (AttributeError, ValueError) as e:
+            return Response({'error': 'Invalid JSON in request data'}, status=status.HTTP_400_BAD_REQUEST)
         
         if not all([document_id, paragraph_id]):
             return Response({'error': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
@@ -621,7 +790,7 @@ class DeleteParagraphView(APIView):
                 shutil.rmtree(temp_dir)
             raise e
         
-class AddCommentView(APIView):
+class AddCommentView(XMLFormattingMixin, APIView):
     def post(self, request):
         document_id = request.data.get('document_id')
         paragraph_id = request.data.get('paragraph_id')
@@ -711,7 +880,8 @@ class AddCommentView(APIView):
             t_elem = ET.SubElement(r_elem, '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
             t_elem.text = text
             
-            tree.write(comments_path, encoding='utf-8', xml_declaration=True)
+            # Write XML with proper formatting
+            self._write_xml_with_proper_formatting(tree, comments_path)
             
             # Update document.xml to add comment reference
             self.add_comment_reference_to_document(temp_dir, paragraph_id, comment_id)
@@ -719,13 +889,11 @@ class AddCommentView(APIView):
             # Update relationships if needed
             self.ensure_comments_relationship(temp_dir)
             
-            # Recreate the DOCX file
-            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED) as zip_ref:
-                for root_dir, dirs, files in os.walk(temp_dir):
-                    for file in files:
-                        file_path_full = os.path.join(root_dir, file)
-                        arc_name = os.path.relpath(file_path_full, temp_dir)
-                        zip_ref.write(file_path_full, arc_name)
+            # Ensure comments content type is registered
+            self.ensure_comments_content_type(temp_dir)
+            
+            # Recreate the DOCX file with proper XML formatting for ALL files
+            self._recreate_docx_with_proper_xml_formatting(file_path, temp_dir)
             
             shutil.rmtree(temp_dir)
             os.remove(backup_path)
@@ -823,7 +991,166 @@ class AddCommentView(APIView):
             # Save the relationships file
             ET.register_namespace('', 'http://schemas.openxmlformats.org/package/2006/relationships')
             tree = ET.ElementTree(rels_root)
-            tree.write(rels_path, encoding='utf-8', xml_declaration=True)
+            self._write_xml_with_proper_formatting(tree, rels_path)
+
+    def ensure_comments_content_type(self, temp_dir):
+        """Ensure comments.xml is registered in [Content_Types].xml"""
+        content_types_path = os.path.join(temp_dir, '[Content_Types].xml')
+        
+        if not os.path.exists(content_types_path):
+            return
+        
+        try:
+            tree = ET.parse(content_types_path)
+            root = tree.getroot()
+            
+            # Check if comments content type already exists
+            namespaces = {'ct': 'http://schemas.openxmlformats.org/package/2006/content-types'}
+            existing = root.find(".//ct:Override[@PartName='/word/comments.xml']", namespaces)
+            
+            if existing is None:
+                # Add the comments content type
+                override_elem = ET.SubElement(root, '{http://schemas.openxmlformats.org/package/2006/content-types}Override')
+                override_elem.set('PartName', '/word/comments.xml')
+                override_elem.set('ContentType', 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml')
+                
+                # Save the content types file
+                ET.register_namespace('', 'http://schemas.openxmlformats.org/package/2006/content-types')
+                self._write_xml_with_proper_formatting(tree, content_types_path)
+                
+        except Exception as e:
+            print(f"Error updating content types: {e}")
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class DeleteCommentView(XMLFormattingMixin, APIView):
+    def delete(self, request):
+        # Parse JSON data from request body for DELETE requests
+        try:
+            data = request.data
+            document_id = data.get('document_id')
+            comment_id = data.get('comment_id')
+        except (AttributeError, ValueError) as e:
+            return Response({'error': 'Invalid JSON in request data'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not all([document_id, comment_id]):
+            return Response({'error': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            document = Document.objects.get(id=document_id)
+            comment = Comment.objects.get(document=document, comment_id=comment_id)
+            
+            # Delete comment from DOCX file first
+            self.delete_comment_from_docx(document.file_path, comment_id)
+            
+            # Delete comment from database
+            comment.delete()
+            
+            return Response({
+                'message': 'Comment deleted successfully',
+                'comment_id': comment_id
+            })
+            
+        except Document.DoesNotExist:
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Comment.DoesNotExist:
+            return Response({'error': 'Comment not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"Error deleting comment: {e}")
+            return Response({'error': f'Error deleting comment: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def delete_comment_from_docx(self, file_path, comment_id):
+        backup_path = None
+        temp_dir = None
+        
+        try:
+            # Create a backup
+            backup_path = file_path + '.backup'
+            shutil.copy2(file_path, backup_path)
+            
+            # Extract the DOCX
+            temp_dir = file_path + '_temp'
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+                
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+            
+            # Update comments.xml
+            comments_path = os.path.join(temp_dir, 'word', 'comments.xml')
+            
+            if os.path.exists(comments_path):
+                ET.register_namespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
+                
+                tree = ET.parse(comments_path)
+                root = tree.getroot()
+                
+                namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                
+                # Find and remove the comment
+                comments = root.findall('.//w:comment', namespaces)
+                for comment in comments:
+                    if comment.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id') == str(comment_id):
+                        root.remove(comment)
+                        break
+                
+                self._write_xml_with_proper_formatting(tree, comments_path)
+            
+            # Remove comment references from document.xml
+            self.remove_comment_references_from_document(temp_dir, comment_id)
+            
+            # Recreate the DOCX file with proper XML formatting for ALL files
+            self._recreate_docx_with_proper_xml_formatting(file_path, temp_dir)
+            
+            # Cleanup
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            if backup_path and os.path.exists(backup_path):
+                os.remove(backup_path)
+                
+        except Exception as e:
+            # Restore backup if something went wrong
+            if backup_path and os.path.exists(backup_path):
+                shutil.copy2(backup_path, file_path)
+                os.remove(backup_path)
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            raise e
+
+    def remove_comment_references_from_document(self, temp_dir, comment_id):
+        document_path = os.path.join(temp_dir, 'word', 'document.xml')
+        
+        if not os.path.exists(document_path):
+            return
+        
+        ET.register_namespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
+        
+        tree = ET.parse(document_path)
+        root = tree.getroot()
+        
+        namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+        
+        # Create parent map for efficient parent lookup
+        parent_map = {child: parent for parent in root.iter() for child in parent}
+        
+        # Helper function to remove elements using parent map
+        def remove_elements_by_xpath(xpath_pattern):
+            elements_to_remove = root.findall(xpath_pattern, namespaces)
+            for element in elements_to_remove:
+                parent = parent_map.get(element)
+                if parent is not None:
+                    parent.remove(element)
+        
+        # Remove comment range starts
+        remove_elements_by_xpath(f'.//w:commentRangeStart[@w:id="{comment_id}"]')
+        
+        # Remove comment range ends  
+        remove_elements_by_xpath(f'.//w:commentRangeEnd[@w:id="{comment_id}"]')
+        
+        # Remove comment references
+        remove_elements_by_xpath(f'.//w:commentReference[@w:id="{comment_id}"]')
+        
+        self._write_xml_with_proper_formatting(tree, document_path)
 
 
 class ListDocumentsView(APIView):

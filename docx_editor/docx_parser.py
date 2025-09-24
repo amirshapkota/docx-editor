@@ -133,17 +133,16 @@ class EnhancedDocxParser:
         root = tree.getroot()
         
         paragraphs_data = []
-        paragraph_counter = 0
+        paragraph_counter = 0  # Counter for consecutive paragraph IDs in database
         
         # Find all paragraphs
         for para_elem in root.findall('.//w:p', self.namespaces):
-            paragraph_counter += 1
-            
             # Extract text and HTML content
             text_content, html_content, has_images = self._process_paragraph(para_elem)
             
             # Only create paragraph if it has content
             if text_content.strip() or has_images:
+                paragraph_counter += 1  # Increment only when creating a paragraph
                 paragraph = Paragraph.objects.create(
                     document=self.document,
                     paragraph_id=paragraph_counter,
@@ -170,6 +169,33 @@ class EnhancedDocxParser:
         html_parts = []
         has_images = False
         
+        # Check paragraph properties for alignment and styling
+        para_props = para_elem.find('w:pPr', self.namespaces)
+        alignment = None
+        is_heading = False
+        heading_level = None
+        
+        if para_props is not None:
+            # Check alignment
+            jc = para_props.find('w:jc', self.namespaces)
+            if jc is not None:
+                alignment = jc.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val')
+            
+            # Check if it's a heading (look for heading style)
+            style_elem = para_props.find('w:pStyle', self.namespaces)
+            if style_elem is not None:
+                style_val = style_elem.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val')
+                if style_val and 'heading' in style_val.lower():
+                    is_heading = True
+                    # Extract heading level (e.g., "Heading1" -> 1)
+                    try:
+                        heading_level = int(style_val[-1]) if style_val[-1].isdigit() else 1
+                    except:
+                        heading_level = 1
+                elif style_val in ['Title', 'Subtitle']:
+                    is_heading = True
+                    heading_level = 1
+        
         # Process all runs in the paragraph
         for run in para_elem.findall('.//w:r', self.namespaces):
             run_text, run_html, run_has_image = self._process_run(run)
@@ -182,9 +208,24 @@ class EnhancedDocxParser:
         text_content = ''.join(text_parts)
         html_content = ''.join(html_parts)
         
-        # Wrap in paragraph tags if there's content
+        # Wrap in appropriate HTML tags with formatting
         if html_content.strip():
-            html_content = f'<p>{html_content}</p>'
+            # Apply heading formatting
+            if is_heading and heading_level:
+                tag = f'h{min(heading_level, 6)}'
+                html_content = f'<{tag}>{html_content}</{tag}>'
+            else:
+                # Regular paragraph with alignment
+                style_attr = ''
+                if alignment:
+                    if alignment == 'center':
+                        style_attr = ' style="text-align: center;"'
+                    elif alignment == 'right':
+                        style_attr = ' style="text-align: right;"'
+                    elif alignment == 'both':
+                        style_attr = ' style="text-align: justify;"'
+                
+                html_content = f'<p{style_attr}>{html_content}</p>'
         
         return text_content, html_content, has_images
     
@@ -208,7 +249,6 @@ class EnhancedDocxParser:
             img_html = self._process_drawing(drawing)
             if img_html:
                 html_content += img_html
-                # Only add [IMAGE] to text if we don't have HTML content
                 # This allows screen readers to know there's an image
                 text_content += '[IMAGE]'
                 has_image = True
