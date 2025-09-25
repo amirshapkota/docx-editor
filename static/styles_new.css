@@ -1,5 +1,10 @@
 /* Editor-specific styles */
 
+/* Test style to verify CSS is loading */
+.paragraph-wrapper {
+    position: relative;
+}
+
 /* Custom button styles for editor actions */
 .btn-small {
     width: 28px;
@@ -52,4 +57,135 @@
 
 .paragraph-wrapper:hover .paragraph-actions {
     transform: translateY(-50%) translateX(0);
+}
+
+/* ML Compliance Status Indicators */
+.paragraph-wrapper .compliance-status {
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    margin: 8px 0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid;
+    transition: all 0.2s ease;
+}
+
+/* Compliance status color schemes */
+.paragraph-wrapper .compliance-status.status-compliant {
+    background-color: #d4f6d4 !important;
+    border-color: #28a745 !important;
+    color: #155724 !important;
+}
+
+.paragraph-wrapper .compliance-status.status-partial {
+    background-color: #fff3cd !important;
+    border-color: #ffc107 !important;
+    color: #856404 !important;
+}
+
+.paragraph-wrapper .compliance-status.status-non_compliant {
+    background-color: #f8d7da !important;
+    border-color: #dc3545 !important;
+    color: #721c24 !important;
+}
+
+.paragraph-wrapper .compliance-status.status-checking {
+    background-color: #e2e8f0 !important;
+    border-color: #64748b !important;
+    color: #475569 !important;
+    animation: pulse 1.5s ease-in-out infinite alternate;
+}
+
+.paragraph-wrapper .compliance-status.status-error {
+    background-color: #f1f5f9 !important;
+    border-color: #94a3b8 !important;
+    color: #64748b !important;
+}
+
+@keyframes pulse {
+    from { opacity: 0.6; }
+    to { opacity: 1; }
+}
+
+.status-icon {
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.status-text {
+    flex: 1;
+}
+
+.status-score {
+    font-weight: bold;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    background-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Comment Status Indicators */
+.comment-text {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.comment-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    margin-left: 8px;
+    border: 1px solid;
+}
+
+.comment-status.status-compliant {
+    background-color: #d4f6d4;
+    border-color: #28a745;
+    color: #155724;
+}
+
+.comment-status.status-partial {
+    background-color: #fff3cd;
+    border-color: #ffc107;
+    color: #856404;
+}
+
+.comment-status.status-non_compliant {
+    background-color: #f8d7da;
+    border-color: #dc3545;
+    color: #721c24;
+}
+
+.comment-status.status-checking {
+    background-color: #e2e8f0;
+    border-color: #64748b;
+    color: #475569;
+    animation: pulse 1.5s ease-in-out infinite alternate;
+}
+
+.comment-status.status-error {
+    background-color: #f1f5f9;
+    border-color: #94a3b8;
+    color: #64748b;
+}
+
+/* Improved paragraph highlighting with compliance awareness */
+.paragraph-wrapper.highlighted {
+    background-color: #e3f2fd;
+    border-left: 4px solid #2196f3;
+    padding-left: 12px;
+    transition: all 0.3s ease;
+}
+
+.paragraph-wrapper.highlighted .compliance-status {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }

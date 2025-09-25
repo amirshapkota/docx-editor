@@ -444,6 +444,8 @@ class EditParagraphView(XMLFormattingMixin, APIView):
             return Response({'error': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
+            print(f"DEBUG: EditParagraphView.put called with document_id={document_id}, paragraph_id={paragraph_id}")
+            
             # Use get_document method if available (for full editor), otherwise use direct lookup
             if hasattr(self, 'get_document'):
                 document = self.get_document(document_id)
@@ -453,46 +455,192 @@ class EditParagraphView(XMLFormattingMixin, APIView):
                 document = Document.objects.get(id=document_id)
             
             paragraph = Paragraph.objects.get(document=document, paragraph_id=paragraph_id)
+            print(f"DEBUG: Found paragraph {paragraph_id}, processing ML compliance checks...")
             
-            # AUTO-DELETE COMMENTS: Delete all comments associated with this paragraph
-            # This implements the workflow: Comment → Edit → Auto-delete comments
-            comments_to_delete = Comment.objects.filter(paragraph=paragraph)
+            # SMART COMMENT MANAGEMENT: Check ML compliance before deciding to delete comments
+            # New workflow: Comment → Edit → ML Check → Delete only if compliant
+            comments_to_check = Comment.objects.filter(paragraph=paragraph)
+            ml_results = []
+            compliant_comment_ids = []
             deleted_comment_ids = []
             
-            if comments_to_delete.exists():
-                print(f"Auto-deleting {comments_to_delete.count()} comments from paragraph {paragraph_id} due to edit")
+            if comments_to_check.exists():
+                print(f"ML compliance checking {comments_to_check.count()} comments for paragraph {paragraph_id}")
                 
-                # Delete comments from DOCX file first
-                for comment in comments_to_delete:
+                # Get original text for ML comparison
+                original_text = paragraph.text or ""
+                
+                # Check each comment for ML compliance
+                for comment in comments_to_check:
                     try:
-                        self.delete_comment_from_docx(document.file_path, comment.comment_id)
-                        deleted_comment_ids.append(comment.comment_id)
+                        print(f"DEBUG: Checking compliance for comment {comment.comment_id}")
+                        # Use ML or fallback to basic compliance checking
+                        ml_result = self.check_comment_compliance(original_text, comment.text, new_text)
+                        print(f"DEBUG: ML result for comment {comment.comment_id}: {ml_result}")
+                        
+                        # Determine proper status based on score (override ML prediction if needed)
+                        final_status = ml_result['prediction']
+                        score = ml_result['compliance_score']
+                        
+                        # Ensure consistent classification: only "compliant" if score >= 0.6
+                        if score >= 0.6:
+                            final_status = 'compliant'
+                        elif score >= 0.3:
+                            final_status = 'partial'
+                        else:
+                            final_status = 'non_compliant'
+                            
+                        # Update comment status based on corrected classification
+                        comment.compliance_status = final_status
+                        comment.compliance_score = score
+                        comment.last_checked = timezone.now()
+                        comment.save()
+                        
+                        ml_results.append({
+                            'comment_id': comment.comment_id,
+                            'comment_text': comment.text[:50] + "..." if len(comment.text) > 50 else comment.text,
+                            'status': final_status,
+                            'score': score,
+                            'confidence': ml_result['confidence']
+                        })
+                        
+                        # Only delete comments that are truly compliant with good confidence
+                        if final_status == 'compliant' and score >= 0.6:
+                            try:
+                                print(f"DEBUG: Attempting to delete compliant comment {comment.comment_id}")
+                                # Check file integrity before attempting DOCX operations
+                                docx_operation_success = False
+                                if os.path.exists(document.file_path):
+                                    try:
+                                        with zipfile.ZipFile(document.file_path, 'r') as test_zip:
+                                            test_zip.testzip()
+                                        self.delete_comment_from_docx(document.file_path, comment.comment_id)
+                                        docx_operation_success = True
+                                        print(f"DEBUG: Successfully deleted comment from DOCX")
+                                    except (zipfile.BadZipFile, zipfile.LargeZipFile, Exception) as zip_error:
+                                        print(f"Warning: DOCX file issue, skipping DOCX comment deletion: {zip_error}")
+                                        docx_operation_success = False
+                                else:
+                                    print(f"Warning: DOCX file not found, skipping DOCX comment deletion")
+                                
+                                # Delete from database regardless of DOCX operation success
+                                comment.delete()
+                                compliant_comment_ids.append(comment.comment_id)
+                                deleted_comment_ids.append(comment.comment_id)
+                                status_msg = "DELETED compliant comment {} (score: {:.2f}){}".format(
+                                    comment.comment_id, 
+                                    ml_result['compliance_score'],
+                                    "" if docx_operation_success else " [DB only - DOCX file issue]"
+                                )
+                                print(status_msg)
+                            except Exception as e:
+                                print(f"Warning: Could not delete compliant comment {comment.comment_id}: {e}")
+                        else:
+                            print(f"KEEPING comment {comment.comment_id} - {ml_result['prediction']} (score: {ml_result['compliance_score']:.2f})")
+                    
                     except Exception as e:
-                        print(f"Warning: Could not delete comment {comment.comment_id} from DOCX: {e}")
-                
-                # Delete comments from database
-                comments_to_delete.delete()
+                        print(f"Error: ML compliance check failed for comment {comment.comment_id}: {e}")
+                        print(f"Exception type: {type(e).__name__}")
+                        print(f"Exception traceback: {e}")
+                        # Keep comment with pending status on ML failure
+                        comment.compliance_status = 'pending'
+                        comment.save()
             
+            print(f"DEBUG: Updating paragraph {paragraph_id} text in database...")
             # Update paragraph text in database
             paragraph.text = new_text
             # Clear html_content so the plain text will be displayed
             paragraph.html_content = ""
             paragraph.save()
             
-            # Update paragraph text in DOCX file
-            self.update_paragraph_in_docx(document.file_path, paragraph_id, new_text)
+            print(f"DEBUG: Updating paragraph {paragraph_id} text in DOCX file...")
+            # Update paragraph text in DOCX file with file integrity check
+            try:
+                # Check if file exists and is a valid zip before attempting to modify it
+                if not os.path.exists(document.file_path):
+                    print(f"Warning: DOCX file not found at {document.file_path}, skipping DOCX update")
+                else:
+                    # Test if file is a valid zip/DOCX file
+                    try:
+                        with zipfile.ZipFile(document.file_path, 'r') as test_zip:
+                            test_zip.testzip()  # This will raise an exception if the file is corrupted
+                        print(f"DEBUG: DOCX file integrity check passed")
+                        self.update_paragraph_in_docx(document.file_path, paragraph_id, new_text)
+                        print(f"DEBUG: Successfully updated DOCX file")
+                    except (zipfile.BadZipFile, zipfile.LargeZipFile) as zip_error:
+                        print(f"Error: DOCX file is corrupted or not a valid zip file: {zip_error}")
+                        print(f"Continuing with database update only...")
+                        # Don't fail the entire request if DOCX update fails
+            except Exception as file_error:
+                print(f"Warning: Could not update DOCX file: {file_error}")
+                print(f"Continuing with database update only...")
             
-            # Return response with information about deleted comments
+            print(f"DEBUG: Successfully completed EditParagraphView.put for paragraph {paragraph_id}")
+            
+            # Update response with ML compliance results
             response_data = {
                 'paragraph_id': paragraph.paragraph_id,
-                'text': paragraph.text
+                'text': paragraph.text,
+                'ml_compliance_results': ml_results
             }
             
             if deleted_comment_ids:
                 response_data['deleted_comments'] = deleted_comment_ids
-                response_data['message'] = f'Paragraph updated and {len(deleted_comment_ids)} comment(s) automatically deleted'
+                response_data['message'] = f'Paragraph updated. {len(deleted_comment_ids)} compliant comment(s) automatically deleted. {len(ml_results) - len(deleted_comment_ids)} comment(s) remain.'
+            elif ml_results:
+                response_data['message'] = f'Paragraph updated. {len(ml_results)} comment(s) checked - none were compliant enough for auto-deletion.'
+            else:
+                response_data['message'] = 'Paragraph updated.'
             
             return Response(response_data)
+            
+        except Document.DoesNotExist:
+            print(f"ERROR: Document {document_id} not found")
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Paragraph.DoesNotExist:
+            print(f"ERROR: Paragraph {paragraph_id} not found in document {document_id}")
+            return Response({'error': 'Paragraph not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"CRITICAL ERROR in EditParagraphView.put: {e}")
+            print(f"Exception type: {type(e).__name__}")
+            import traceback
+            traceback.print_exc()
+            return Response({'error': f'Error updating paragraph: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def check_comment_compliance(self, original_text: str, comment_text: str, edited_text: str):
+        """Check compliance using ML system (with fallback to basic system)"""
+        try:
+            # Try advanced ML system first
+            if ML_FULL_SYSTEM_AVAILABLE and ML_DEPENDENCIES_AVAILABLE:
+                ml_model = get_or_create_default_model()
+                if ml_model is not None:
+                    result = ml_model.predict(original_text, comment_text, edited_text)
+                    return {
+                        'prediction': result['prediction'],
+                        'compliance_score': result['compliance_score'],
+                        'confidence': result['confidence'],
+                        'model_type': 'advanced_ml'
+                    }
+            
+            # Fallback to basic system
+            basic_model = get_basic_compliance_model()
+            result = basic_model.predict(original_text, comment_text, edited_text)
+            return {
+                'prediction': result['prediction'],
+                'compliance_score': result['compliance_score'],
+                'confidence': result['confidence'],
+                'model_type': 'basic'
+            }
+            
+        except Exception as e:
+            print(f"Warning: ML compliance check failed: {e}")
+            # Return safe default on error
+            return {
+                'prediction': 'pending',
+                'compliance_score': 0.0,
+                'confidence': 0.0,
+                'model_type': 'error_fallback'
+            }
             
         except Document.DoesNotExist:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -940,14 +1088,24 @@ class AddCommentView(XMLFormattingMixin, APIView):
                 text=text
             )
             
-            # Add comment to DOCX file
-            self.add_comment_to_docx(document.file_path, paragraph_id, next_comment_id, author, text)
+            # Try to add comment to DOCX file
+            docx_success = True
+            docx_error = None
+            try:
+                self.add_comment_to_docx(document.file_path, paragraph_id, next_comment_id, author, text)
+            except Exception as docx_e:
+                docx_success = False
+                docx_error = str(docx_e)
+                print(f"Warning: Could not add comment to DOCX file: {docx_e}")
             
             return Response({
                 'id': comment.comment_id,
+                'comment_id': comment.comment_id,
                 'author': comment.author,
                 'text': comment.text,
-                'paragraph_id': paragraph.paragraph_id
+                'paragraph_id': paragraph.paragraph_id,
+                'docx_success': docx_success,
+                'docx_error': docx_error if not docx_success else None
             })
             
         except Document.DoesNotExist:
@@ -1312,3 +1470,374 @@ class ServeImageView(APIView):
             return Response({'error': 'Image not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
             return Response({'error': f'Error serving image: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# ============================================================================
+# ML COMPLIANCE CHECKING VIEWS
+# ============================================================================
+
+import time
+from django.utils import timezone
+from .basic_ml_compliance import get_basic_compliance_model
+
+# Try to import full ML system
+try:
+    from .ml_compliance import get_or_create_default_model, ML_DEPENDENCIES_AVAILABLE
+    ML_FULL_SYSTEM_AVAILABLE = True
+except ImportError:
+    ML_FULL_SYSTEM_AVAILABLE = False
+    ML_DEPENDENCIES_AVAILABLE = False
+
+
+class CheckEditComplianceRealTimeView(APIView):
+    """
+    Real-time ML compliance checking for live editing feedback
+    This endpoint is called while the user is typing to provide instant feedback
+    """
+    
+    def post(self, request):
+        # Extract input data
+        paragraph_id = request.data.get('paragraph_id')
+        document_id = request.data.get('document_id')
+        current_text = request.data.get('current_text', '')
+        
+        if not all([paragraph_id, document_id, current_text]):
+            return Response({
+                'error': 'Missing required fields: paragraph_id, document_id, current_text'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Get document and paragraph
+            document = Document.objects.get(id=document_id)
+            paragraph = Paragraph.objects.get(document=document, paragraph_id=paragraph_id)
+            
+            # Get original text and all comments for this paragraph
+            original_text = paragraph.text or ""
+            comments = Comment.objects.filter(paragraph=paragraph)
+            
+            if not comments.exists():
+                return Response({
+                    'message': 'No comments found for this paragraph',
+                    'compliance_results': []
+                })
+            
+            # Check compliance against all comments in real-time
+            compliance_results = []
+            overall_status = 'compliant'  # Start optimistic
+            
+            for comment in comments:
+                try:
+                    # Use the same ML checking method as edit paragraph
+                    ml_result = self.check_comment_compliance_realtime(original_text, comment.text, current_text)
+                    
+                    result_data = {
+                        'comment_id': comment.comment_id,
+                        'comment_text': comment.text,
+                        'status': ml_result['prediction'],
+                        'score': ml_result['compliance_score'],
+                        'confidence': ml_result['confidence'],
+                        'model_type': ml_result['model_type']
+                    }
+                    
+                    compliance_results.append(result_data)
+                    
+                    # Determine overall status (most restrictive)
+                    if ml_result['prediction'] == 'non_compliant':
+                        overall_status = 'non_compliant'
+                    elif ml_result['prediction'] == 'partial' and overall_status == 'compliant':
+                        overall_status = 'partial'
+                
+                except Exception as e:
+                    print(f"Real-time compliance check failed for comment {comment.comment_id}: {e}")
+                    compliance_results.append({
+                        'comment_id': comment.comment_id,
+                        'comment_text': comment.text,
+                        'status': 'error',
+                        'score': 0.0,
+                        'confidence': 0.0,
+                        'model_type': 'error'
+                    })
+            
+            # Calculate overall compliance
+            if compliance_results:
+                avg_score = sum(r['score'] for r in compliance_results if r['score'] > 0) / len([r for r in compliance_results if r['score'] > 0])
+            else:
+                avg_score = 0.0
+            
+            return Response({
+                'overall_status': overall_status,
+                'overall_score': avg_score,
+                'compliance_results': compliance_results,
+                'total_comments': len(compliance_results),
+                'can_auto_delete': overall_status == 'compliant' and avg_score >= 0.6
+            })
+            
+        except Document.DoesNotExist:
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Paragraph.DoesNotExist:
+            return Response({'error': 'Paragraph not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': f'Error during real-time compliance check: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def check_comment_compliance_realtime(self, original_text: str, comment_text: str, edited_text: str):
+        """Check compliance using ML system - optimized for real-time use with consistent thresholds"""
+        try:
+            # Try advanced ML system first
+            if ML_FULL_SYSTEM_AVAILABLE and ML_DEPENDENCIES_AVAILABLE:
+                ml_model = get_or_create_default_model()
+                if ml_model is not None:
+                    result = ml_model.predict(original_text, comment_text, edited_text)
+                    score = result['compliance_score']
+                    
+                    # Use consistent classification thresholds
+                    if score >= 0.6:
+                        final_status = 'compliant'
+                    elif score >= 0.3:
+                        final_status = 'partial'
+                    else:
+                        final_status = 'non_compliant'
+                    
+                    return {
+                        'prediction': final_status,
+                        'compliance_score': score,
+                        'confidence': result['confidence'],
+                        'model_type': 'advanced_ml'
+                    }
+            
+            # Fallback to basic system
+            basic_model = get_basic_compliance_model()
+            result = basic_model.predict(original_text, comment_text, edited_text)
+            score = result['compliance_score']
+            
+            # Use consistent classification thresholds for basic model too
+            if score >= 0.6:
+                final_status = 'compliant'
+            elif score >= 0.3:
+                final_status = 'partial'
+            else:
+                final_status = 'non_compliant'
+            
+            return {
+                'prediction': final_status,
+                'compliance_score': score,
+                'confidence': result['confidence'],
+                'model_type': 'basic'
+            }
+            
+        except Exception as e:
+            print(f"Real-time ML compliance check failed: {e}")
+            return {
+                'prediction': 'pending',
+                'compliance_score': 0.0,
+                'confidence': 0.0,
+                'model_type': 'error_fallback'
+            }
+
+
+class CheckEditComplianceView(APIView):
+    """
+    API endpoint to check if an edit complies with a comment
+    """
+    
+    def post(self, request):
+        # Extract input data
+        original_text = request.data.get('original_text', '')
+        comment_text = request.data.get('comment_text', '')
+        edited_text = request.data.get('edited_text', '')
+        
+        if not all([original_text, comment_text, edited_text]):
+            return Response({
+                'error': 'Missing required fields: original_text, comment_text, edited_text'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Try to use full ML model first, fallback to basic if needed
+            model_type = 'basic'
+            
+            if ML_FULL_SYSTEM_AVAILABLE and ML_DEPENDENCIES_AVAILABLE:
+                try:
+                    # Try to get the advanced ML model
+                    ml_model = get_or_create_default_model()
+                    if ml_model is not None:
+                        # Record start time for performance tracking
+                        start_time = time.time()
+                        
+                        # Make prediction using advanced ML model
+                        prediction_result = ml_model.predict(original_text, comment_text, edited_text)
+                        explanation = ml_model.explain_prediction(original_text, comment_text, edited_text)
+                        
+                        # Calculate processing time
+                        processing_time = int((time.time() - start_time) * 1000)  # milliseconds
+                        
+                        response_data = {
+                            'compliance_score': prediction_result['compliance_score'],
+                            'prediction': prediction_result['prediction'],
+                            'confidence': prediction_result['confidence'],
+                            'explanation': {
+                                'interpretation': explanation['interpretation'],
+                                'top_features': explanation.get('top_features', [])
+                            },
+                            'processing_time_ms': processing_time,
+                            'model_type': 'advanced_ml'
+                        }
+                        
+                        return Response(response_data)
+                except Exception as e:
+                    print(f"Warning: Full ML system failed, falling back to basic: {e}")
+            
+            # Fallback to basic compliance model
+            model = get_basic_compliance_model()
+            
+            # Record start time for performance tracking
+            start_time = time.time()
+            
+            # Make prediction
+            prediction_result = model.predict(original_text, comment_text, edited_text)
+            
+            # Get explanation
+            explanation = model.explain_prediction(original_text, comment_text, edited_text)
+            
+            # Calculate processing time
+            processing_time = int((time.time() - start_time) * 1000)  # milliseconds
+            
+            response_data = {
+                'compliance_score': prediction_result['compliance_score'],
+                'prediction': prediction_result['prediction'],
+                'confidence': prediction_result['confidence'],
+                'explanation': {
+                    'interpretation': explanation['interpretation']
+                },
+                'processing_time_ms': processing_time,
+                'model_type': 'basic'
+            }
+            
+            return Response(response_data)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Error during compliance check: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class CheckParagraphComplianceView(APIView):
+    """
+    Check compliance for a specific paragraph that was edited
+    """
+    
+    def post(self, request):
+        document_id = request.data.get('document_id')
+        paragraph_id = request.data.get('paragraph_id')
+        original_text = request.data.get('original_text', '')
+        edited_text = request.data.get('edited_text', '')
+        
+        if not all([document_id, paragraph_id]):
+            return Response({
+                'error': 'Missing required fields: document_id, paragraph_id'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            document = Document.objects.get(id=document_id)
+            paragraph = Paragraph.objects.get(document=document, paragraph_id=paragraph_id)
+            
+            # Get all comments for this paragraph
+            comments = Comment.objects.filter(paragraph=paragraph)
+            
+            if not comments.exists():
+                return Response({
+                    'message': 'No comments found for this paragraph',
+                    'compliance_results': []
+                })
+            
+            # Use paragraph text if not provided
+            if not original_text:
+                original_text = paragraph.text
+            if not edited_text:
+                edited_text = paragraph.text
+            
+            # Check compliance against all comments
+            compliance_results = []
+            model = get_basic_compliance_model()
+            
+            for comment in comments:
+                result = model.predict(original_text, comment.text, edited_text)
+                explanation = model.explain_prediction(original_text, comment.text, edited_text)
+                
+                compliance_results.append({
+                    'comment_id': comment.comment_id,
+                    'comment_author': comment.author,
+                    'comment_text': comment.text,
+                    'compliance_score': result['compliance_score'],
+                    'prediction': result['prediction'],
+                    'confidence': result['confidence'],
+                    'explanation': explanation['interpretation']
+                })
+            
+            # Calculate overall compliance
+            if compliance_results:
+                avg_compliance = sum(r['compliance_score'] for r in compliance_results) / len(compliance_results)
+                overall_prediction = 'compliant' if avg_compliance > 0.6 else 'partial' if avg_compliance > 0.3 else 'non_compliant'
+            else:
+                avg_compliance = 0.0
+                overall_prediction = 'no_comments'
+            
+            return Response({
+                'paragraph_id': paragraph_id,
+                'overall_compliance_score': avg_compliance,
+                'overall_prediction': overall_prediction,
+                'compliance_results': compliance_results,
+                'total_comments_checked': len(compliance_results)
+            })
+            
+        except Document.DoesNotExist:
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Paragraph.DoesNotExist:
+            return Response({'error': 'Paragraph not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': f'Error checking paragraph compliance: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class MLModelStatusView(APIView):
+    """Get information about the current ML model"""
+    
+    def get(self, request):
+        try:
+            print(f"DEBUG: ML_FULL_SYSTEM_AVAILABLE = {ML_FULL_SYSTEM_AVAILABLE}")
+            print(f"DEBUG: ML_DEPENDENCIES_AVAILABLE = {ML_DEPENDENCIES_AVAILABLE}")
+            
+            # Check for advanced ML system first
+            if ML_FULL_SYSTEM_AVAILABLE and ML_DEPENDENCIES_AVAILABLE:
+                try:
+                    print("DEBUG: Attempting to get advanced ML model...")
+                    ml_model = get_or_create_default_model()
+                    print(f"DEBUG: ML model result: {ml_model is not None}")
+                    if ml_model is not None:
+                        return Response({
+                            'model_loaded': True,
+                            'model_type': 'Advanced ML Classifier (RandomForest)',
+                            'status': 'ready',
+                            'ml_available': True,
+                            'description': 'Full ML system with RandomForest classifier and 20+ features for accurate compliance prediction'
+                        })
+                except Exception as e:
+                    print(f"DEBUG: Advanced ML system failed: {e}")
+            
+            # Fallback to basic system
+            print("DEBUG: Using fallback basic system")
+            return Response({
+                'model_loaded': True,
+                'model_type': 'Rule-based Basic Checker',
+                'status': 'ready',
+                'ml_available': ML_DEPENDENCIES_AVAILABLE,
+                'description': 'Basic rule-based compliance checker (full ML dependencies available for upgrade)'
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'Error getting model status: {str(e)}',
+                'model_loaded': False,
+                'status': 'error'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -2,6 +2,8 @@ class DocxEditor extends DocxBase {
     constructor() {
         super();
         this.pendingDeleteId = null;
+        this.complianceCheckTimeout = null;
+        this.lastComplianceCheck = {};
         this.initDeleteModal();
         this.initCommentForm();
         this.initExportButton();
@@ -102,7 +104,9 @@ class DocxEditor extends DocxBase {
                     });
 
                     if (!response.ok) {
-                        throw new Error('Failed to add comment');
+                        const errorText = await response.text();
+                        console.error('Server response:', response.status, errorText);
+                        throw new Error(`Failed to add comment: ${response.status} ${errorText}`);
                     }
 
                     const data = await response.json();
@@ -115,7 +119,12 @@ class DocxEditor extends DocxBase {
                     // Highlight the paragraph
                     this.highlightParagraph(parseInt(paragraphSelect.value));
                     
-                    this.showStatus('Comment added successfully', 'success');
+                    // Show appropriate status message
+                    if (data.docx_success) {
+                        this.showStatus('Comment added successfully', 'success');
+                    } else {
+                        this.showStatus('Comment saved (DOCX update failed: ' + data.docx_error + ')', 'warning');
+                    }
                 } catch (error) {
                     console.error('Error adding comment:', error);
                     this.showStatus('Error adding comment: ' + error.message, 'error');
@@ -180,6 +189,7 @@ class DocxEditor extends DocxBase {
         content.addEventListener('input', (e) => {
             this.unsavedChanges = true;
             this.scheduleAutoSave(para.id, content.textContent);
+            this.scheduleComplianceCheck(para.id, content.textContent);
         });
         
         content.addEventListener('keydown', (e) => {
@@ -237,6 +247,276 @@ class DocxEditor extends DocxBase {
         return wrapper;
     }
     
+    scheduleComplianceCheck(paragraphId, text) {
+        // Clear previous timeout
+        if (this.complianceCheckTimeout) {
+            clearTimeout(this.complianceCheckTimeout);
+        }
+        
+        // Only check if there are comments for this paragraph
+        const paragraphComments = this.comments.filter(c => c.paragraph_id === paragraphId);
+        if (paragraphComments.length === 0) {
+            console.log(`No comments for paragraph ${paragraphId}, clearing compliance status`);
+            this.clearComplianceStatus(paragraphId);
+            return;
+        }
+        
+        console.log(`Scheduling compliance check for paragraph ${paragraphId} with ${paragraphComments.length} comments`);
+        
+        // Debounced ML compliance check (wait for user to stop typing)
+        this.complianceCheckTimeout = setTimeout(async () => {
+            try {
+                await this.checkComplianceRealTime(paragraphId, text);
+            } catch (error) {
+                console.error('Real-time compliance check error:', error);
+                this.showComplianceStatus(paragraphId, 'error', 0.0, 'Error checking compliance');
+            }
+        }, 800); // Wait 800ms after user stops typing
+    }
+
+    async checkComplianceRealTime(paragraphId, currentText) {
+        if (!this.currentDocumentId) {
+            console.log('No document ID available for compliance check');
+            return;
+        }
+        
+        // Debug logging
+        console.log('Checking compliance for:', {
+            document_id: this.currentDocumentId,
+            paragraph_id: paragraphId,
+            current_text: currentText.substring(0, 50) + '...'
+        });
+        
+        try {
+            // Show checking status
+            this.showComplianceStatus(paragraphId, 'checking', 0.0, 'Checking compliance...');
+            
+            const response = await fetch('/editor/api/ml/check-compliance-realtime/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    document_id: this.currentDocumentId,
+                    paragraph_id: paragraphId,
+                    current_text: currentText
+                })
+            });
+
+            console.log('API response status:', response.status);
+            console.log('API response headers:', Object.fromEntries(response.headers.entries()));
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('API error response:', errorText);
+                throw new Error(`API returned ${response.status}: ${errorText}`);
+            }
+
+            const data = await response.json();
+            console.log('API response data:', data);
+            
+            // Store latest compliance result
+            this.lastComplianceCheck[paragraphId] = data;
+            
+            // Update UI with compliance status
+            this.showComplianceStatus(
+                paragraphId, 
+                data.overall_status, 
+                data.overall_score,
+                this.formatComplianceMessage(data)
+            );
+            
+            // Update comment statuses
+            this.updateCommentStatuses(data.compliance_results);
+            
+        } catch (error) {
+            console.error('Real-time compliance check failed:', error);
+            console.error('Error stack:', error.stack);
+            this.showComplianceStatus(paragraphId, 'error', 0.0, `Failed: ${error.message}`);
+        }
+    }
+
+    formatComplianceMessage(data) {
+        if (data.total_comments === 0) {
+            return 'No comments to check';
+        }
+        
+        const score = Math.round(data.overall_score * 100);
+        let message = `${data.total_comments} comment${data.total_comments > 1 ? 's' : ''} - ${score}% compliance`;
+        
+        if (data.can_auto_delete) {
+            message += ' Can auto-delete';
+        } else {
+            message += ' Needs attention';
+        }
+        
+        return message;
+    }
+
+    showComplianceStatus(paragraphId, status, score, message) {
+        const wrapper = document.querySelector(`.paragraph-wrapper[data-id="${paragraphId}"]`);
+        if (!wrapper) {
+            console.log('Could not find paragraph wrapper for ID:', paragraphId);
+            return;
+        }
+        
+        // Remove existing status
+        let statusElement = wrapper.querySelector('.compliance-status');
+        if (statusElement) {
+            statusElement.remove();
+        }
+        
+        // Create new status element
+        statusElement = document.createElement('div');
+        const statusClass = `compliance-status status-${status}`;
+        statusElement.className = statusClass;
+        
+        console.log('Creating compliance status with class:', statusClass);
+        console.log('Status details:', {status, score, message});
+        
+        // Add inline styles as fallback to ensure colors show
+        let backgroundColor, borderColor, textColor;
+        switch(status) {
+            case 'compliant':
+                backgroundColor = '#d4f6d4';
+                borderColor = '#28a745';
+                textColor = '#155724';
+                break;
+            case 'partial':
+                backgroundColor = '#fff3cd';
+                borderColor = '#ffc107';
+                textColor = '#856404';
+                break;
+            case 'non_compliant':
+                backgroundColor = '#f8d7da';
+                borderColor = '#dc3545';
+                textColor = '#721c24';
+                break;
+            case 'checking':
+                backgroundColor = '#e2e8f0';
+                borderColor = '#64748b';
+                textColor = '#475569';
+                break;
+            default:
+                backgroundColor = '#f1f5f9';
+                borderColor = '#94a3b8';
+                textColor = '#64748b';
+        }
+        
+        statusElement.style.cssText = `
+            display: flex !important;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            margin: 8px 0;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            border: 1px solid ${borderColor};
+            background-color: ${backgroundColor};
+            color: ${textColor};
+            transition: all 0.2s ease;
+        `;
+        
+        statusElement.innerHTML = `
+            <span class="status-icon">${this.getStatusIcon(status)}</span>
+            <span class="status-text" style="flex: 1;">${message}</span>
+            <span class="status-score" style="font-weight: bold; font-size: 12px; padding: 2px 6px; border-radius: 10px; background-color: rgba(0,0,0,0.1);">${Math.round(score * 100)}%</span>
+        `;
+        
+        // Insert before actions
+        const actions = wrapper.querySelector('.paragraph-actions');
+        if (actions) {
+            wrapper.insertBefore(statusElement, actions);
+        } else {
+            wrapper.appendChild(statusElement);
+        }
+        
+        console.log('Compliance status element created:', statusElement);
+        console.log('Element computed styles:', window.getComputedStyle(statusElement));
+    }
+
+    clearComplianceStatus(paragraphId) {
+        const wrapper = document.querySelector(`.paragraph-wrapper[data-id="${paragraphId}"]`);
+        if (!wrapper) return;
+        
+        const statusElement = wrapper.querySelector('.compliance-status');
+        if (statusElement) {
+            statusElement.remove();
+        }
+    }
+
+    getStatusIcon(status) {
+        switch (status) {
+            case 'compliant': return 'OK';
+            case 'partial': return 'WARN';
+            case 'non_compliant': return 'ERR';
+            case 'checking': return 'CHK';
+            case 'error': return 'ERR';
+            default: return '?';
+        }
+    }
+
+    updateCommentStatuses(complianceResults) {
+        // Update comment display with compliance status
+        complianceResults.forEach(result => {
+            const commentElement = document.querySelector(`[data-comment-id="${result.comment_id}"]`);
+            if (commentElement) {
+                const statusSpan = commentElement.querySelector('.comment-status') || 
+                    this.createCommentStatusElement(commentElement);
+                
+                statusSpan.className = `comment-status status-${result.status}`;
+                statusSpan.innerHTML = `
+                    ${this.getStatusIcon(result.status)} 
+                    ${Math.round(result.score * 100)}%
+                `;
+                statusSpan.title = `Compliance: ${result.status} (${Math.round(result.confidence * 100)}% confidence)`;
+            }
+        });
+    }
+
+    createCommentStatusElement(commentElement) {
+        const statusSpan = document.createElement('span');
+        statusSpan.className = 'comment-status';
+        
+        // Insert after comment text
+        const textElement = commentElement.querySelector('.comment-text');
+        if (textElement) {
+            textElement.appendChild(statusSpan);
+        } else {
+            commentElement.appendChild(statusSpan);
+        }
+        
+        return statusSpan;
+    }
+
+    createCommentElement(comment) {
+        const element = super.createCommentElement(comment);
+        
+        // Add data attribute for comment ID
+        element.dataset.commentId = comment.id;
+        
+        // Add compliance status placeholder
+        const content = element.querySelector('.comment-content');
+        if (content) {
+            const statusWrapper = document.createElement('div');
+            statusWrapper.className = 'comment-text';
+            
+            // Move existing text content to wrapper
+            statusWrapper.textContent = content.textContent;
+            content.textContent = '';
+            content.appendChild(statusWrapper);
+            
+            // Create status element (will be populated by real-time checks)
+            const statusElement = document.createElement('span');
+            statusElement.className = 'comment-status';
+            statusElement.style.marginLeft = '10px';
+            statusWrapper.appendChild(statusElement);
+        }
+        
+        return element;
+    }
+
     scheduleAutoSave(paragraphId, text) {
         this.setSaveStatus('saving');
         
@@ -262,28 +542,38 @@ class DocxEditor extends DocxBase {
     }
     
     async saveParagraph(paragraphId, text) {
-                            const response = await fetch('/editor/api/edit_paragraph/', {
-            method: 'PUT',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                document_id: this.currentDocumentId,
-                paragraph_id: paragraphId,
-                text: text
-            })
-        });
-        
-        if (!response.ok) {
-            throw new Error('Failed to save paragraph');
-        }
-        
-        const paraIndex = this.paragraphs.findIndex(p => p.id === paragraphId);
-        if (paraIndex !== -1) {
-            this.paragraphs[paraIndex].text = text;
-            // Clear html_content so plain text will be used for display
-            this.paragraphs[paraIndex].html_content = "";
-            this.renderComments(); // Update comment list with new paragraph text
+        try {
+            const response = await fetch('/editor/api/edit_paragraph/', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    document_id: this.currentDocumentId,
+                    paragraph_id: paragraphId,
+                    text: text
+                })
+            });
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('Save paragraph error response:', response.status, errorText);
+                throw new Error(`Failed to save paragraph (${response.status}): ${errorText}`);
+            }
+            
+            const responseData = await response.json();
+            console.log('Save paragraph success:', responseData);
+            
+            const paraIndex = this.paragraphs.findIndex(p => p.id === paragraphId);
+            if (paraIndex !== -1) {
+                this.paragraphs[paraIndex].text = text;
+                // Clear html_content so plain text will be used for display
+                this.paragraphs[paraIndex].html_content = "";
+                this.renderComments(); // Update comment list with new paragraph text
+            }
+        } catch (error) {
+            console.error('Save paragraph failed:', error);
+            throw error; // Re-throw to trigger auto-save error handling
         }
     }
     

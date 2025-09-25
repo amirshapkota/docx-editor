@@ -14,4 +14,10 @@ urlpatterns = [
     path('api/add_comment/', views.AddCommentView.as_view(), name='add_comment'),
     path('api/delete_comment/', views.DeleteCommentView.as_view(), name='delete_comment'),
     path('api/image/<int:image_id>/', views.ServeImageView.as_view(), name='serve_image'),
+    
+    # ML Compliance Checking APIs  
+    path('api/ml/check-compliance/', views.CheckEditComplianceView.as_view(), name='check_compliance'),
+    path('api/ml/check-compliance-realtime/', views.CheckEditComplianceRealTimeView.as_view(), name='check_compliance_realtime'),
+    path('api/ml/check-paragraph-compliance/', views.CheckParagraphComplianceView.as_view(), name='check_paragraph_compliance'),
+    path('api/ml/model-status/', views.MLModelStatusView.as_view(), name='ml_model_status'),
 ]

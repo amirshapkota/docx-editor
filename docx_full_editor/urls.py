@@ -1,6 +1,12 @@
 from django.urls import path
 from django.views.generic import TemplateView
 from . import views
+from docx_editor.views import (
+    CheckEditComplianceRealTimeView,
+    CheckEditComplianceView,
+    CheckParagraphComplianceView,
+    MLModelStatusView
+)
 
 app_name = 'docx_full_editor'
 
@@ -18,4 +24,10 @@ urlpatterns = [
     path('api/delete_paragraph/', views.DeleteParagraphView.as_view(), name='delete_paragraph'),
     path('api/add_comment/', views.AddCommentView.as_view(), name='add_comment'),
     path('api/delete_comment/', views.DeleteCommentView.as_view(), name='delete_comment'),
+    
+    # ML Compliance Checking APIs  
+    path('api/ml/check-compliance/', CheckEditComplianceView.as_view(), name='check_compliance'),
+    path('api/ml/check-compliance-realtime/', CheckEditComplianceRealTimeView.as_view(), name='check_compliance_realtime'),
+    path('api/ml/check-paragraph-compliance/', CheckParagraphComplianceView.as_view(), name='check_paragraph_compliance'),
+    path('api/ml/model-status/', MLModelStatusView.as_view(), name='ml_model_status'),
 ]
