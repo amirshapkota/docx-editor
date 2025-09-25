@@ -3,8 +3,11 @@ class DocxBase {
         this.currentDocumentId = null;
         this.paragraphs = [];
         this.comments = [];
+        this.unsavedChanges = false;
+        this.selectedParagraphId = null;
         
         this.initUI();
+        this.initWindowEvents();
     }
     
     initUI() {
@@ -37,6 +40,40 @@ class DocxBase {
                 }
             });
         }
+        
+        // Initialize paragraph select event
+        const paragraphSelect = document.getElementById('paragraphSelect');
+        if (paragraphSelect) {
+            paragraphSelect.addEventListener('change', (e) => {
+                const paragraphId = e.target.value;
+                if (paragraphId) {
+                    this.highlightParagraph(parseInt(paragraphId));
+                }
+            });
+        }
+    }
+    
+    initWindowEvents() {
+        window.addEventListener('beforeunload', (e) => {
+            if (this.unsavedChanges) {
+                e.preventDefault();
+                e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+            }
+        });
+    }
+    
+    highlightParagraph(paragraphId) {
+        // Remove existing highlights
+        document.querySelectorAll('.paragraph-wrapper').forEach(p => {
+            p.classList.remove('highlighted');
+        });
+        
+        // Add highlight to selected paragraph
+        const paragraph = document.querySelector(`.paragraph-wrapper[data-id="${paragraphId}"]`);
+        if (paragraph) {
+            paragraph.classList.add('highlighted');
+            paragraph.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
     }
     
     async handleFileSelect(event) {
@@ -49,24 +86,52 @@ class DocxBase {
         }
         
         const formData = new FormData();
-        formData.append('document', file);
+        formData.append('file', file);
         
         try {
             this.showStatus('Uploading document...', 'info');
             
-            const response = await fetch('/upload/', {
+            const isEditor = window.location.pathname.startsWith('/editor/');
+            const uploadPath = isEditor ? '/editor/api/upload/' : '/commenter/api/upload/';
+            
+            console.log('Starting upload to:', uploadPath);
+            
+            const response = await fetch(uploadPath, {
                 method: 'POST',
                 body: formData
             });
             
+            console.log('Upload response status:', response.status, response.statusText);
+            
             const data = await response.json();
+            console.log('Upload response data:', data);
             
             if (!response.ok) {
+                console.error('Upload failed with response:', data);
                 throw new Error(data.error || 'Upload failed');
             }
             
             this.showStatus('Document uploaded successfully!', 'success');
-            await this.loadDocument(data.document_id);
+            // Debug: Log the response to see its structure
+            console.log('Upload response data:', data);
+            console.log('data.data:', data.data);
+            console.log('data.document_id:', data.document_id);
+            
+            // Extract document_id from the nested response structure
+            let documentId = null;
+            if (data.data && data.data.document_id) {
+                documentId = data.data.document_id;
+                console.log('Using nested document ID:', documentId);
+            } else if (data.document_id) {
+                documentId = data.document_id;
+                console.log('Using flat document ID:', documentId);
+            } else {
+                console.error('No document_id found in response:', data);
+                throw new Error('No document ID returned from upload');
+            }
+            
+            console.log('Final extracted document ID:', documentId);
+            await this.loadDocument(documentId);
             
         } catch (error) {
             console.error('Upload error:', error);
@@ -87,7 +152,13 @@ class DocxBase {
     
     async loadDocument(documentId) {
         try {
-            const response = await fetch(`/document/${documentId}/`);
+            console.log('loadDocument called with ID:', documentId);
+            const isEditor = window.location.pathname.startsWith('/editor/');
+            const documentPath = isEditor ? `/editor/api/document/${documentId}/` : `/commenter/api/document/${documentId}/`;
+            const timestamp = new Date().getTime();
+            
+            console.log('Fetching document from:', documentPath + '?t=' + timestamp);
+            const response = await fetch(documentPath + '?t=' + timestamp);
             const data = await response.json();
             
             if (!response.ok) {
@@ -97,6 +168,7 @@ class DocxBase {
             this.currentDocumentId = data.document_id;
             this.paragraphs = data.paragraphs;
             this.comments = data.comments;
+            this.unsavedChanges = false;
             
             this.renderDocument();
             this.renderComments();
@@ -119,21 +191,114 @@ class DocxBase {
         
         const content = document.createElement('div');
         content.className = 'paragraph-content';
-        content.textContent = para.text;
+        
+        // Use HTML content if available, otherwise fall back to plain text
+        if (para.html_content && para.html_content.trim()) {
+            content.innerHTML = para.html_content;
+            
+            // Make images clickable for viewing
+            const images = content.querySelectorAll('.document-image');
+            images.forEach(img => {
+                img.addEventListener('click', () => this.showImageModal(img));
+                img.style.cursor = 'pointer';
+                img.style.maxWidth = '100%';
+                img.style.height = 'auto';
+            });
+        } else if (para.text && para.text.trim()) {
+            content.textContent = para.text;
+        } else {
+            content.innerHTML = '<em style="color: #666;">Empty paragraph</em>';
+        }
+        
+        // Add click handler for paragraph selection
+        content.addEventListener('click', () => {
+            this.selectParagraph(para.id);
+        });
         
         wrapper.appendChild(content);
         
         return wrapper;
     }
     
+    showImageModal(img) {
+        // Create a modal to show the full-size image
+        const modal = document.createElement('div');
+        modal.className = 'image-modal';
+        modal.innerHTML = `
+            <div class="image-modal-content">
+                <span class="close-modal">&times;</span>
+                <img src="${img.src}" alt="${img.alt}" style="max-width: 90%; max-height: 90%;">
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Close modal handlers
+        const closeBtn = modal.querySelector('.close-modal');
+        closeBtn.addEventListener('click', () => document.body.removeChild(modal));
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                document.body.removeChild(modal);
+            }
+        });
+    }
+    
+    selectParagraph(paragraphId) {
+        // Remove previous selection
+        document.querySelectorAll('.paragraph-wrapper').forEach(el => {
+            el.classList.remove('selected');
+        });
+        
+        // Select current paragraph
+        const wrapper = document.querySelector(`[data-id="${paragraphId}"]`);
+        if (wrapper) {
+            wrapper.classList.add('selected');
+        }
+        
+        // Update paragraph select dropdown
+        const select = document.getElementById('paragraphSelect');
+        if (select) {
+            select.value = paragraphId;
+        }
+        
+        this.selectedParagraphId = paragraphId;
+    }
+    
     renderDocument() {
         const content = document.getElementById('document-content');
         content.innerHTML = '';
         
+        // Safety check: ensure paragraphs is defined and is an array
+        if (!this.paragraphs || !Array.isArray(this.paragraphs)) {
+            console.error('renderDocument called with invalid paragraphs:', this.paragraphs);
+            content.innerHTML = '<div class="loading">Error: No paragraphs data available</div>';
+            return;
+        }
+        
         this.paragraphs.sort((a, b) => a.id - b.id);
         
         for (const para of this.paragraphs) {
-            content.appendChild(this.createParagraphWrapper(para));
+            // Add paragraph
+            const wrapper = this.createParagraphWrapper(para);
+            content.appendChild(wrapper);
+            
+            // Add "Add paragraph" button after each paragraph
+            const addButton = document.createElement('button');
+            addButton.className = 'add-paragraph-button';
+            addButton.addEventListener('click', () => {
+                this.insertParagraphAfter(para.id);
+            });
+            content.appendChild(addButton);
+        }
+        
+        // Add final "Add paragraph" button if there are no paragraphs
+        if (this.paragraphs.length === 0) {
+            const addButton = document.createElement('button');
+            addButton.className = 'add-paragraph-button';
+            addButton.addEventListener('click', () => {
+                this.insertParagraphAfter(0);
+            });
+            content.appendChild(addButton);
         }
     }
     
@@ -141,13 +306,9 @@ class DocxBase {
         const commentsList = document.getElementById('commentsList');
         commentsList.innerHTML = '';
         
-        if (this.comments.length === 0) {
-            commentsList.innerHTML = '<div class="loading">No comments yet</div>';
-            return;
-        }
-        
+        // Always populate the paragraph dropdown, regardless of whether comments exist
         const paragraphSelect = document.getElementById('paragraphSelect');
-        if (paragraphSelect) {
+        if (paragraphSelect && this.paragraphs) {
             paragraphSelect.innerHTML = '<option value="">Select a paragraph...</option>';
             
             for (const para of this.paragraphs) {
@@ -156,6 +317,11 @@ class DocxBase {
                 option.textContent = `Paragraph ${para.id}: ${para.text.substring(0, 50)}...`;
                 paragraphSelect.appendChild(option);
             }
+        }
+        
+        if (this.comments.length === 0) {
+            commentsList.innerHTML = '<div class="loading">No comments yet</div>';
+            return;
         }
         
         // Group comments by paragraph
@@ -182,6 +348,11 @@ class DocxBase {
                 const header = document.createElement('h4');
                 header.textContent = `Paragraph ${paragraphId}:`;
                 header.title = paragraph.text;
+                
+                // Add click handler to highlight paragraph
+                header.style.cursor = 'pointer';
+                header.addEventListener('click', () => this.highlightParagraph(Number(paragraphId)));
+                
                 paragraphComments.appendChild(header);
             }
             
@@ -200,10 +371,42 @@ class DocxBase {
         
         const header = document.createElement('div');
         header.className = 'comment-header';
-        header.innerHTML = `
-            <span class="comment-author">${comment.author}</span>
-            <span class="comment-date">${new Date(comment.created_at).toLocaleDateString()}</span>
-        `;
+        
+        const date = new Date(comment.created_at);
+        const formattedDate = date.toLocaleDateString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+        const formattedTime = date.toLocaleTimeString(undefined, {
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        
+        // Create header with author and date
+        const authorSpan = document.createElement('span');
+        authorSpan.className = 'comment-author';
+        authorSpan.textContent = comment.author;
+        
+        const dateSpan = document.createElement('span');
+        dateSpan.className = 'comment-date';
+        dateSpan.title = `Created on ${formattedDate} at ${formattedTime}`;
+        dateSpan.textContent = `${formattedDate} ${formattedTime}`;
+        
+        // Create delete button
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'comment-delete-btn';
+        deleteBtn.innerHTML = '×';
+        deleteBtn.title = 'Delete comment';
+        deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.deleteComment(comment.id);
+        });
+        
+        // Assemble header
+        header.appendChild(authorSpan);
+        header.appendChild(dateSpan);
+        header.appendChild(deleteBtn);
         
         const content = document.createElement('div');
         content.className = 'comment-content';
@@ -213,5 +416,44 @@ class DocxBase {
         element.appendChild(content);
         
         return element;
+    }
+
+    async deleteComment(commentId) {
+        if (!confirm('Are you sure you want to delete this comment?')) {
+            return;
+        }
+
+        try {
+            const isEditor = window.location.pathname.startsWith('/editor/');
+            const apiPath = isEditor ? '/editor/api/delete_comment/' : '/commenter/api/delete_comment/';
+            
+            const response = await fetch(apiPath, {
+                method: 'DELETE',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    document_id: this.currentDocumentId,
+                    comment_id: commentId
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to delete comment');
+            }
+            
+            // Remove comment from local data
+            this.comments = this.comments.filter(c => c.id !== commentId);
+            
+            // Re-render comments
+            this.renderComments();
+            
+            this.showStatus('Comment deleted successfully', 'success');
+            
+        } catch (error) {
+            console.error('Error deleting comment:', error);
+            this.showStatus('Error deleting comment: ' + error.message, 'error');
+        }
     }
 }

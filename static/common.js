@@ -94,19 +94,44 @@ class DocxBase {
             const isEditor = window.location.pathname.startsWith('/editor/');
             const uploadPath = isEditor ? '/editor/api/upload/' : '/commenter/api/upload/';
             
+            console.log('Starting upload to:', uploadPath);
+            
             const response = await fetch(uploadPath, {
                 method: 'POST',
                 body: formData
             });
             
+            console.log('Upload response status:', response.status, response.statusText);
+            
             const data = await response.json();
+            console.log('Upload response data:', data);
             
             if (!response.ok) {
+                console.error('Upload failed with response:', data);
                 throw new Error(data.error || 'Upload failed');
             }
             
             this.showStatus('Document uploaded successfully!', 'success');
-            await this.loadDocument(data.document_id);
+            // Debug: Log the response to see its structure
+            console.log('Upload response data:', data);
+            console.log('data.data:', data.data);
+            console.log('data.document_id:', data.document_id);
+            
+            // Extract document_id from the nested response structure
+            let documentId = null;
+            if (data.data && data.data.document_id) {
+                documentId = data.data.document_id;
+                console.log('Using nested document ID:', documentId);
+            } else if (data.document_id) {
+                documentId = data.document_id;
+                console.log('Using flat document ID:', documentId);
+            } else {
+                console.error('No document_id found in response:', data);
+                throw new Error('No document ID returned from upload');
+            }
+            
+            console.log('Final extracted document ID:', documentId);
+            await this.loadDocument(documentId);
             
         } catch (error) {
             console.error('Upload error:', error);
@@ -127,10 +152,12 @@ class DocxBase {
     
     async loadDocument(documentId) {
         try {
+            console.log('loadDocument called with ID:', documentId);
             const isEditor = window.location.pathname.startsWith('/editor/');
             const documentPath = isEditor ? `/editor/api/document/${documentId}/` : `/commenter/api/document/${documentId}/`;
             const timestamp = new Date().getTime();
             
+            console.log('Fetching document from:', documentPath + '?t=' + timestamp);
             const response = await fetch(documentPath + '?t=' + timestamp);
             const data = await response.json();
             
@@ -241,6 +268,13 @@ class DocxBase {
         const content = document.getElementById('document-content');
         content.innerHTML = '';
         
+        // Safety check: ensure paragraphs is defined and is an array
+        if (!this.paragraphs || !Array.isArray(this.paragraphs)) {
+            console.error('renderDocument called with invalid paragraphs:', this.paragraphs);
+            content.innerHTML = '<div class="loading">Error: No paragraphs data available</div>';
+            return;
+        }
+        
         this.paragraphs.sort((a, b) => a.id - b.id);
         
         for (const para of this.paragraphs) {
@@ -272,13 +306,9 @@ class DocxBase {
         const commentsList = document.getElementById('commentsList');
         commentsList.innerHTML = '';
         
-        if (this.comments.length === 0) {
-            commentsList.innerHTML = '<div class="loading">No comments yet</div>';
-            return;
-        }
-        
+        // Always populate the paragraph dropdown, regardless of whether comments exist
         const paragraphSelect = document.getElementById('paragraphSelect');
-        if (paragraphSelect) {
+        if (paragraphSelect && this.paragraphs) {
             paragraphSelect.innerHTML = '<option value="">Select a paragraph...</option>';
             
             for (const para of this.paragraphs) {
@@ -287,6 +317,11 @@ class DocxBase {
                 option.textContent = `Paragraph ${para.id}: ${para.text.substring(0, 50)}...`;
                 paragraphSelect.appendChild(option);
             }
+        }
+        
+        if (this.comments.length === 0) {
+            commentsList.innerHTML = '<div class="loading">No comments yet</div>';
+            return;
         }
         
         // Group comments by paragraph

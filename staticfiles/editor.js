@@ -3,6 +3,8 @@ class DocxEditor extends DocxBase {
         super();
         this.pendingDeleteId = null;
         this.initDeleteModal();
+        this.initCommentForm();
+        this.initExportButton();
         this.loadDocumentsList();
     }
 
@@ -37,6 +39,10 @@ class DocxEditor extends DocxBase {
                 item.innerHTML = `<a href="#" data-id="${doc.id}">${doc.filename}</a>`;
                 item.querySelector('a').addEventListener('click', (e) => {
                     e.preventDefault();
+                    // Check for unsaved changes before switching documents
+                    if (this.unsavedChanges && !confirm('You have unsaved changes. Are you sure you want to switch documents?')) {
+                        return;
+                    }
                     this.loadDocument(doc.id);
                 });
                 list.appendChild(item);
@@ -60,6 +66,110 @@ class DocxEditor extends DocxBase {
         });
     }
 
+    initCommentForm() {
+        const commentForm = document.getElementById('addCommentForm');
+        if (!commentForm) return;
+
+        const saveCommentBtn = document.getElementById('saveCommentBtn');
+        if (saveCommentBtn) {
+            saveCommentBtn.addEventListener('click', async () => {
+                const paragraphSelect = document.getElementById('paragraphSelect');
+                const authorInput = document.getElementById('authorInput');
+                const commentInput = document.getElementById('commentInput');
+
+                if (!paragraphSelect.value) {
+                    this.showStatus('Please select a paragraph', 'error');
+                    return;
+                }
+
+                if (!commentInput.value.trim()) {
+                    this.showStatus('Please enter a comment', 'error');
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/editor/api/add_comment/', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            document_id: this.currentDocumentId,
+                            paragraph_id: parseInt(paragraphSelect.value),
+                            author: authorInput.value.trim() || 'Anonymous',
+                            text: commentInput.value.trim()
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to add comment');
+                    }
+
+                    const data = await response.json();
+                    this.comments.push(data);
+                    this.renderComments();
+
+                    // Clear form
+                    commentInput.value = '';
+                    
+                    // Highlight the paragraph
+                    this.highlightParagraph(parseInt(paragraphSelect.value));
+                    
+                    this.showStatus('Comment added successfully', 'success');
+                } catch (error) {
+                    console.error('Error adding comment:', error);
+                    this.showStatus('Error adding comment: ' + error.message, 'error');
+                }
+            });
+        }
+    }
+
+    initExportButton() {
+        const exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', async () => {
+                if (!this.currentDocumentId) return;
+
+                try {
+                    this.showStatus('Exporting document...', 'info');
+                    
+                    const response = await fetch(`/editor/api/document/${this.currentDocumentId}/export/`, {
+                        method: 'GET'
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Export failed');
+                    }
+
+                    // Get the filename from Content-Disposition header
+                    const contentDisposition = response.headers.get('Content-Disposition');
+                    let filename = 'document.docx';
+                    if (contentDisposition) {
+                        const filenameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+                        if (filenameMatch && filenameMatch[1]) {
+                            filename = filenameMatch[1].replace(/['"]/g, '');
+                        }
+                    }
+
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = filename;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+
+                    this.showStatus('Document exported successfully', 'success');
+                } catch (error) {
+                    console.error('Export error:', error);
+                    this.showStatus('Error exporting document: ' + error.message, 'error');
+                }
+            });
+        }
+    }
+
     createParagraphWrapper(para) {
         const wrapper = super.createParagraphWrapper(para);
         
@@ -68,6 +178,7 @@ class DocxEditor extends DocxBase {
         content.contentEditable = true;
         
         content.addEventListener('input', (e) => {
+            this.unsavedChanges = true;
             this.scheduleAutoSave(para.id, content.textContent);
         });
         
@@ -81,7 +192,7 @@ class DocxEditor extends DocxBase {
             }
         });
         
-        // Add paragraph actions
+        // Add comment button
         const actions = document.createElement('div');
         actions.className = 'paragraph-actions';
         
@@ -101,7 +212,27 @@ class DocxEditor extends DocxBase {
         duplicateBtn.addEventListener('click', () => this.duplicateParagraph(para.id));
         actions.appendChild(duplicateBtn);
         
+        // Comment button
+        const commentBtn = document.createElement('button');
+        commentBtn.className = 'btn-small btn-primary';
+        commentBtn.innerHTML = '💬';
+        commentBtn.title = 'Add comment';
+        commentBtn.addEventListener('click', () => {
+            const select = document.getElementById('paragraphSelect');
+            select.value = para.id;
+            this.highlightParagraph(para.id);
+            document.getElementById('commentInput').focus();
+        });
+        actions.appendChild(commentBtn);
+        
         wrapper.appendChild(actions);
+        
+        // Click handler for highlighting
+        content.addEventListener('click', () => {
+            const select = document.getElementById('paragraphSelect');
+            select.value = para.id;
+            this.highlightParagraph(para.id);
+        });
         
         return wrapper;
     }
@@ -117,6 +248,7 @@ class DocxEditor extends DocxBase {
             try {
                 await this.saveParagraph(paragraphId, text);
                 this.setSaveStatus('saved');
+                this.unsavedChanges = false;
                 
                 setTimeout(() => {
                     this.setSaveStatus('ready');
@@ -130,7 +262,7 @@ class DocxEditor extends DocxBase {
     }
     
     async saveParagraph(paragraphId, text) {
-        const response = await fetch('/editor/api/edit_paragraph/', {
+                            const response = await fetch('/editor/api/edit_paragraph/', {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -149,6 +281,9 @@ class DocxEditor extends DocxBase {
         const paraIndex = this.paragraphs.findIndex(p => p.id === paragraphId);
         if (paraIndex !== -1) {
             this.paragraphs[paraIndex].text = text;
+            // Clear html_content so plain text will be used for display
+            this.paragraphs[paraIndex].html_content = "";
+            this.renderComments(); // Update comment list with new paragraph text
         }
     }
     
@@ -308,9 +443,71 @@ class DocxEditor extends DocxBase {
             this.showStatus(`Error duplicating paragraph: ${error.message}`, 'error');
         }
     }
+
+    async insertParagraphAfter(paragraphId) {
+        try {
+            const position = paragraphId + 1;
+            
+            const response = await fetch('/editor/api/add_paragraph/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    document_id: this.currentDocumentId,
+                    text: '',
+                    position: position
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to insert paragraph');
+            }
+            
+            // Update local data
+            this.paragraphs.forEach(p => {
+                if (p.id >= position) {
+                    p.id += 1;
+                }
+            });
+            
+            // Add new paragraph
+            const newParagraph = {
+                id: position,
+                text: ''
+            };
+            this.paragraphs.push(newParagraph);
+            
+            this.paragraphs.sort((a, b) => a.id - b.id);
+            
+            // Update comment references
+            this.comments.forEach(c => {
+                if (c.paragraph_id >= position) {
+                    c.paragraph_id += 1;
+                }
+            });
+            
+            this.renderDocument();
+            this.renderComments();
+            
+            // Focus the new paragraph
+            requestAnimationFrame(() => {
+                const newPara = document.querySelector(`.paragraph-wrapper[data-id="${position}"] .paragraph-content`);
+                if (newPara) {
+                    newPara.focus();
+                }
+            });
+            
+            this.showStatus('New paragraph inserted', 'success');
+            
+        } catch (error) {
+            console.error('Error inserting paragraph:', error);
+            this.showStatus(`Error inserting paragraph: ${error.message}`, 'error');
+        }
+    }
 }
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', () => {
-    new DocxEditor();
+    window.docxApp = new DocxEditor();
 });

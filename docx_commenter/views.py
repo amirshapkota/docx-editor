@@ -20,7 +20,9 @@ class CommentUploadDocumentView(BaseUploadView):
         
         if response.status_code == status.HTTP_200_OK:
             # Update the document to be comment-only
-            document = Document.objects.get(id=response.data['document_id'])
+            # The response structure is: {'status': 'success', 'data': {'document_id': ...}}
+            document_id = response.data['data']['document_id']
+            document = Document.objects.get(id=document_id)
             document.is_editable = False
             document.save()
         

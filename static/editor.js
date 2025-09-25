@@ -281,6 +281,8 @@ class DocxEditor extends DocxBase {
         const paraIndex = this.paragraphs.findIndex(p => p.id === paragraphId);
         if (paraIndex !== -1) {
             this.paragraphs[paraIndex].text = text;
+            // Clear html_content so plain text will be used for display
+            this.paragraphs[paraIndex].html_content = "";
             this.renderComments(); // Update comment list with new paragraph text
         }
     }

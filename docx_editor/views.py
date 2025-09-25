@@ -169,6 +169,101 @@ class XMLFormattingMixin:
             print(f"Error recreating DOCX with proper XML formatting: {e}")
             return False
 
+    def delete_comment_from_docx(self, file_path, comment_id):
+        """Delete a comment from the DOCX file"""
+        backup_path = None
+        temp_dir = None
+        
+        try:
+            # Create a backup
+            backup_path = file_path + '.backup'
+            shutil.copy2(file_path, backup_path)
+            
+            # Extract the DOCX
+            temp_dir = file_path + '_temp'
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+                
+            with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+            
+            # Update comments.xml
+            comments_path = os.path.join(temp_dir, 'word', 'comments.xml')
+            
+            if os.path.exists(comments_path):
+                ET.register_namespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
+                
+                tree = ET.parse(comments_path)
+                root = tree.getroot()
+                
+                namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                
+                # Find and remove the comment
+                comments = root.findall('.//w:comment', namespaces)
+                for comment in comments:
+                    if comment.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id') == str(comment_id):
+                        root.remove(comment)
+                        break
+                
+                self._write_xml_with_proper_formatting(tree, comments_path)
+            
+            # Remove comment references from document.xml
+            self.remove_comment_references_from_document(temp_dir, comment_id)
+            
+            # Recreate the DOCX file with proper XML formatting for ALL files
+            self._recreate_docx_with_proper_xml_formatting(file_path, temp_dir)
+            
+            # Cleanup
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            if backup_path and os.path.exists(backup_path):
+                os.remove(backup_path)
+                
+        except Exception as e:
+            # Restore backup if something went wrong
+            if backup_path and os.path.exists(backup_path):
+                shutil.copy2(backup_path, file_path)
+                os.remove(backup_path)
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+            raise e
+
+    def remove_comment_references_from_document(self, temp_dir, comment_id):
+        """Remove comment references from document.xml"""
+        document_path = os.path.join(temp_dir, 'word', 'document.xml')
+        
+        if not os.path.exists(document_path):
+            return
+        
+        ET.register_namespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
+        
+        tree = ET.parse(document_path)
+        root = tree.getroot()
+        
+        namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+        
+        # Create parent map for efficient parent lookup
+        parent_map = {child: parent for parent in root.iter() for child in parent}
+        
+        # Helper function to remove elements using parent map
+        def remove_elements_by_xpath(xpath_pattern):
+            elements_to_remove = root.findall(xpath_pattern, namespaces)
+            for element in elements_to_remove:
+                parent = parent_map.get(element)
+                if parent is not None:
+                    parent.remove(element)
+        
+        # Remove comment range starts
+        remove_elements_by_xpath(f'.//w:commentRangeStart[@w:id="{comment_id}"]')
+        
+        # Remove comment range ends  
+        remove_elements_by_xpath(f'.//w:commentRangeEnd[@w:id="{comment_id}"]')
+        
+        # Remove comment references
+        remove_elements_by_xpath(f'.//w:commentReference[@w:id="{comment_id}"]')
+        
+        self._write_xml_with_proper_formatting(tree, document_path)
+
 
 class UploadDocumentView(APIView):
     parser_classes = [MultiPartParser]
@@ -359,17 +454,45 @@ class EditParagraphView(XMLFormattingMixin, APIView):
             
             paragraph = Paragraph.objects.get(document=document, paragraph_id=paragraph_id)
             
+            # AUTO-DELETE COMMENTS: Delete all comments associated with this paragraph
+            # This implements the workflow: Comment → Edit → Auto-delete comments
+            comments_to_delete = Comment.objects.filter(paragraph=paragraph)
+            deleted_comment_ids = []
+            
+            if comments_to_delete.exists():
+                print(f"Auto-deleting {comments_to_delete.count()} comments from paragraph {paragraph_id} due to edit")
+                
+                # Delete comments from DOCX file first
+                for comment in comments_to_delete:
+                    try:
+                        self.delete_comment_from_docx(document.file_path, comment.comment_id)
+                        deleted_comment_ids.append(comment.comment_id)
+                    except Exception as e:
+                        print(f"Warning: Could not delete comment {comment.comment_id} from DOCX: {e}")
+                
+                # Delete comments from database
+                comments_to_delete.delete()
+            
             # Update paragraph text in database
             paragraph.text = new_text
+            # Clear html_content so the plain text will be displayed
+            paragraph.html_content = ""
             paragraph.save()
             
             # Update paragraph text in DOCX file
             self.update_paragraph_in_docx(document.file_path, paragraph_id, new_text)
             
-            return Response({
+            # Return response with information about deleted comments
+            response_data = {
                 'paragraph_id': paragraph.paragraph_id,
                 'text': paragraph.text
-            })
+            }
+            
+            if deleted_comment_ids:
+                response_data['deleted_comments'] = deleted_comment_ids
+                response_data['message'] = f'Paragraph updated and {len(deleted_comment_ids)} comment(s) automatically deleted'
+            
+            return Response(response_data)
             
         except Document.DoesNotExist:
             return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -1058,99 +1181,6 @@ class DeleteCommentView(XMLFormattingMixin, APIView):
         except Exception as e:
             print(f"Error deleting comment: {e}")
             return Response({'error': f'Error deleting comment: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-    def delete_comment_from_docx(self, file_path, comment_id):
-        backup_path = None
-        temp_dir = None
-        
-        try:
-            # Create a backup
-            backup_path = file_path + '.backup'
-            shutil.copy2(file_path, backup_path)
-            
-            # Extract the DOCX
-            temp_dir = file_path + '_temp'
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-                
-            with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                zip_ref.extractall(temp_dir)
-            
-            # Update comments.xml
-            comments_path = os.path.join(temp_dir, 'word', 'comments.xml')
-            
-            if os.path.exists(comments_path):
-                ET.register_namespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
-                
-                tree = ET.parse(comments_path)
-                root = tree.getroot()
-                
-                namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
-                
-                # Find and remove the comment
-                comments = root.findall('.//w:comment', namespaces)
-                for comment in comments:
-                    if comment.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}id') == str(comment_id):
-                        root.remove(comment)
-                        break
-                
-                self._write_xml_with_proper_formatting(tree, comments_path)
-            
-            # Remove comment references from document.xml
-            self.remove_comment_references_from_document(temp_dir, comment_id)
-            
-            # Recreate the DOCX file with proper XML formatting for ALL files
-            self._recreate_docx_with_proper_xml_formatting(file_path, temp_dir)
-            
-            # Cleanup
-            if temp_dir and os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-            if backup_path and os.path.exists(backup_path):
-                os.remove(backup_path)
-                
-        except Exception as e:
-            # Restore backup if something went wrong
-            if backup_path and os.path.exists(backup_path):
-                shutil.copy2(backup_path, file_path)
-                os.remove(backup_path)
-            if temp_dir and os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-            raise e
-
-    def remove_comment_references_from_document(self, temp_dir, comment_id):
-        document_path = os.path.join(temp_dir, 'word', 'document.xml')
-        
-        if not os.path.exists(document_path):
-            return
-        
-        ET.register_namespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
-        
-        tree = ET.parse(document_path)
-        root = tree.getroot()
-        
-        namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
-        
-        # Create parent map for efficient parent lookup
-        parent_map = {child: parent for parent in root.iter() for child in parent}
-        
-        # Helper function to remove elements using parent map
-        def remove_elements_by_xpath(xpath_pattern):
-            elements_to_remove = root.findall(xpath_pattern, namespaces)
-            for element in elements_to_remove:
-                parent = parent_map.get(element)
-                if parent is not None:
-                    parent.remove(element)
-        
-        # Remove comment range starts
-        remove_elements_by_xpath(f'.//w:commentRangeStart[@w:id="{comment_id}"]')
-        
-        # Remove comment range ends  
-        remove_elements_by_xpath(f'.//w:commentRangeEnd[@w:id="{comment_id}"]')
-        
-        # Remove comment references
-        remove_elements_by_xpath(f'.//w:commentReference[@w:id="{comment_id}"]')
-        
-        self._write_xml_with_proper_formatting(tree, document_path)
 
 
 class ListDocumentsView(APIView):

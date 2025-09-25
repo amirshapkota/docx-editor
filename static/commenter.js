@@ -209,27 +209,43 @@ class DocxCommenter extends DocxBase {
         formData.append('is_editable', 'false');  // This is for commenting only
         
         try {
+            console.log('Starting commenter upload...');
             const response = await fetch('/commenter/api/upload/', {
                 method: 'POST',
                 body: formData
             });
             
+            console.log('Commenter upload response status:', response.status, response.statusText);
+            
             if (!response.ok) {
+                console.error('Commenter upload failed with status:', response.status);
                 throw new Error('Upload failed');
             }
             
             const data = await response.json();
-            this.currentDocumentId = data.document_id;
-            this.paragraphs = data.paragraphs;
-            this.comments = data.comments;
+            // Debug: Log the response to see its structure
+            console.log('Commenter upload response:', data);
+            // Extract data from nested response structure: {status: 'success', data: {document_id, paragraphs, comments}}
+            const documentData = data.data || data; // Handle both nested and flat response structures
+            console.log('Extracted document data:', documentData);
             
-            this.renderDocument();
-            this.renderComments();
-            this.showCommentForm();
-            this.showExportButton();
+            this.currentDocumentId = documentData.document_id;
+            this.paragraphs = documentData.paragraphs || [];
+            this.comments = documentData.comments || [];
             
-            this.showStatus('Document loaded successfully!', 'success');
-            this.loadDocumentsList();  // Refresh the documents list after upload
+            // Only render if we have valid data
+            if (this.paragraphs && this.comments) {
+                this.renderDocument();
+                this.renderComments();
+                this.showCommentForm();
+                this.showExportButton();
+                
+                this.showStatus('Document loaded successfully!', 'success');
+                this.loadDocumentsList();  // Refresh the documents list after upload
+            } else {
+                console.error('Invalid document data received:', documentData);
+                this.showStatus('Error: Invalid document data received', 'error');
+            }
             
         } catch (error) {
             console.error('Upload error:', error);
