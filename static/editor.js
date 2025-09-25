@@ -471,6 +471,14 @@ class DocxEditor extends DocxBase {
                     ${Math.round(result.score * 100)}%
                 `;
                 statusSpan.title = `Compliance: ${result.status} (${Math.round(result.confidence * 100)}% confidence)`;
+
+                // Handle scheduled deletion information
+                if (result.is_scheduled_for_deletion && result.scheduled_deletion_at) {
+                    this.handleScheduledDeletion(commentElement, result.scheduled_deletion_at);
+                } else if (result.status === 'compliant') {
+                    // Clear any existing countdown if comment is no longer scheduled
+                    this.clearScheduledDeletion(commentElement);
+                }
             }
         });
     }
@@ -490,11 +498,97 @@ class DocxEditor extends DocxBase {
         return statusSpan;
     }
 
+    handleScheduledDeletion(commentElement, scheduledDeletionAt) {
+        // Check if countdown already exists
+        let countdownElement = commentElement.querySelector('.countdown-timer');
+        
+        if (!countdownElement) {
+            // Create countdown timer element
+            countdownElement = document.createElement('span');
+            countdownElement.className = 'countdown-timer';
+            commentElement.appendChild(countdownElement);
+        }
+
+        // Start countdown
+        this.startCountdown(countdownElement, scheduledDeletionAt, commentElement);
+    }
+
+    clearScheduledDeletion(commentElement) {
+        const countdownElement = commentElement.querySelector('.countdown-timer');
+        const cancelButton = commentElement.querySelector('.cancel-deletion-btn');
+        
+        if (countdownElement) {
+            // Clear any existing interval
+            const intervalId = countdownElement.dataset.intervalId;
+            if (intervalId) {
+                clearInterval(parseInt(intervalId));
+            }
+            countdownElement.remove();
+        }
+        
+        if (cancelButton) {
+            cancelButton.remove();
+        }
+    }
+
+    startCountdown(countdownElement, scheduledDeletionAt, commentElement) {
+        const deletionTime = new Date(scheduledDeletionAt);
+        
+        // Clear any existing interval
+        const existingIntervalId = countdownElement.dataset.intervalId;
+        if (existingIntervalId) {
+            clearInterval(parseInt(existingIntervalId));
+        }
+        
+        const updateCountdown = () => {
+            const now = new Date();
+            const timeLeft = deletionTime - now;
+            
+            if (timeLeft <= 0) {
+                countdownElement.textContent = '🗑️ Deleting...';
+                const intervalId = countdownElement.dataset.intervalId;
+                if (intervalId) {
+                    clearInterval(parseInt(intervalId));
+                }
+                // Comment should be removed by the server shortly
+                return;
+            }
+            
+            const minutes = Math.floor(timeLeft / 60000);
+            const seconds = Math.floor((timeLeft % 60000) / 1000);
+            countdownElement.textContent = `🗑️ Deleting in ${minutes}:${seconds.toString().padStart(2, '0')}`;
+            
+            // Add cancel button if it doesn't exist
+            if (!commentElement.querySelector('.cancel-deletion-btn')) {
+                this.addCancelButton(commentElement);
+            }
+        };
+        
+        // Update immediately
+        updateCountdown();
+        
+        // Set up interval for updates
+        const intervalId = setInterval(updateCountdown, 1000);
+        countdownElement.dataset.intervalId = intervalId.toString();
+    }
+
+    addCancelButton(commentElement) {
+        const cancelButton = document.createElement('button');
+        cancelButton.className = 'cancel-deletion-btn';
+        cancelButton.textContent = '✖️ Cancel';
+        cancelButton.title = 'Cancel scheduled deletion';
+        
+        const commentId = commentElement.dataset.commentId;
+        cancelButton.onclick = () => this.cancelScheduledDeletion(commentId, commentElement);
+        
+        commentElement.appendChild(cancelButton);
+    }
+
     createCommentElement(comment) {
         const element = super.createCommentElement(comment);
         
         // Add data attribute for comment ID
-        element.dataset.commentId = comment.id;
+        element.dataset.commentId = comment.comment_id;
         
         // Add compliance status placeholder
         const content = element.querySelector('.comment-content');

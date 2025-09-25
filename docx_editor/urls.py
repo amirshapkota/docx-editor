@@ -1,6 +1,7 @@
 from django.urls import path
 from django.views.generic import TemplateView
 from . import views
+from .cancel_deletion_view import CancelScheduledDeletionView
 
 urlpatterns = [
     path('', TemplateView.as_view(template_name='editor/index.html'), name='home'),    
@@ -20,4 +21,5 @@ urlpatterns = [
     path('api/ml/check-compliance-realtime/', views.CheckEditComplianceRealTimeView.as_view(), name='check_compliance_realtime'),
     path('api/ml/check-paragraph-compliance/', views.CheckParagraphComplianceView.as_view(), name='check_paragraph_compliance'),
     path('api/ml/model-status/', views.MLModelStatusView.as_view(), name='ml_model_status'),
+    path('api/ml/cancel-scheduled-deletion/', CancelScheduledDeletionView.as_view(), name='cancel_scheduled_deletion'),
 ]

@@ -316,125 +316,132 @@ class ComplianceClassifier:
 
 
 def create_default_training_data():
-    """Create sample training data for initial model"""
-    return [
-        # Compliant examples
-        {
-            'original_text': "The system is working fine.",
-            'comment_text': "Please fix the grammar - use 'functioning' instead of 'working'",
-            'edited_text': "The system is functioning fine.",
-            'compliance_label': 'compliant'
-        },
-        {
-            'original_text': "We need data.",
-            'comment_text': "Be more specific about what kind of data",
-            'edited_text': "We need customer behavioral data and sales metrics.",
-            'compliance_label': 'compliant'
-        },
-        {
-            'original_text': "Users like the feature.",
-            'comment_text': "Add statistics to support this claim",
-            'edited_text': "85% of surveyed users reported liking the feature.",
-            'compliance_label': 'compliant'
-        },
-        {
-            'original_text': "The process takes time.",
-            'comment_text': "Specify how long it takes",
-            'edited_text': "The process takes approximately 2-3 hours to complete.",
-            'compliance_label': 'compliant'
-        },
-        {
-            'original_text': "The application runs slowly.",
-            'comment_text': "Please add details about performance metrics",
-            'edited_text': "The application runs slowly, with average response times of 3-5 seconds.",
-            'compliance_label': 'compliant'
-        },
-        {
-            'original_text': "Customer feedback is positive.",
-            'comment_text': "Include specific feedback examples",
-            'edited_text': "Customer feedback is positive, with users praising the intuitive interface and fast loading times.",
-            'compliance_label': 'compliant'
-        },
+    """Load comprehensive training data from JSON file"""
+    import json
+    
+    # Load comprehensive training data
+    try:
+        training_data_path = os.path.join(os.path.dirname(__file__), 'compliance_training_data.json')
+        if os.path.exists(training_data_path):
+            with open(training_data_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                print(f"[SUCCESS] Loaded comprehensive training data: {len(data)} examples")
+                return data
+        else:
+            print(f"[ERROR] Training data file not found at: {training_data_path}")
+            raise FileNotFoundError(f"Training data file not found: {training_data_path}")
+    except Exception as e:
+        print(f"[ERROR] Error loading comprehensive training data: {e}")
+        raise e
+
+
+def retrain_model_with_comprehensive_data():
+    """Force retrain the model with comprehensive data (useful after data updates)"""
+    if not ML_DEPENDENCIES_AVAILABLE:
+        print("[ERROR] ML dependencies not available. Cannot retrain model.")
+        return None
         
-        # Partial compliance examples
-        {
-            'original_text': "It's broken.",
-            'comment_text': "Explain what's broken and how to fix it",
-            'edited_text': "It's not working properly.",  # Still vague
-            'compliance_label': 'partial'
-        },
-        {
-            'original_text': "The weather is nice today.",
-            'comment_text': "Please fix the grammar",
-            'edited_text': "The weather is nice today and sunny.",  # Added content but didn't fix non-existent grammar
-            'compliance_label': 'partial'
-        },
-        {
-            'original_text': "Sales went up.",
-            'comment_text': "Add specific numbers and timeframe",
-            'edited_text': "Sales increased significantly.",  # Better but still no numbers
-            'compliance_label': 'partial'
-        },
-        {
-            'original_text': "The meeting was good.",
-            'comment_text': "Provide details about what was discussed",
-            'edited_text': "The meeting was productive.",  # Better word but no details
-            'compliance_label': 'partial'
-        },
+    try:
+        # Load comprehensive training data
+        training_data = create_default_training_data()
+        print(f"[INFO] Loaded {len(training_data)} training examples")
         
-        # Non-compliant examples  
-        {
-            'original_text': "The results were good.",
-            'comment_text': "Please be more specific about the results",
-            'edited_text': "The weather was nice.",  # Completely changed topic
-            'compliance_label': 'non_compliant'
-        },
-        {
-            'original_text': "We should implement the feature.",
-            'comment_text': "Explain the technical requirements",
-            'edited_text': "I like chocolate ice cream.",  # Completely unrelated
-            'compliance_label': 'non_compliant'
-        },
-        {
-            'original_text': "The report is finished.",
-            'comment_text': "Add the submission deadline",
-            'edited_text': "The cat is sleeping.",  # Completely different content
-            'compliance_label': 'non_compliant'
-        },
-        {
-            'original_text': "Performance improved.",
-            'comment_text': "Add percentage improvement and metrics",
-            'edited_text': "Blue is my favorite color.",  # Irrelevant change
-            'compliance_label': 'non_compliant'
-        }
-    ]
+        # Analyze data distribution
+        labels = [item['compliance_label'] for item in training_data]
+        from collections import Counter
+        distribution = Counter(labels)
+        print("[INFO] Data distribution:")
+        for label, count in distribution.items():
+            percentage = (count / len(training_data)) * 100
+            print(f"  - {label}: {count} examples ({percentage:.1f}%)")
+        
+        # Train new model
+        classifier = ComplianceClassifier()
+        print("[INFO] Training new model...")
+        metrics = classifier.train(training_data)
+        
+        # Save the trained model
+        model_path = 'ml_models/compliance_model.pkl'
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        classifier.save_model(model_path)
+        
+        # Display training results
+        print("[SUCCESS] Model retrained successfully!")
+        print(f"[METRICS] Training Accuracy: {metrics['accuracy']:.1%}")
+        
+        # Show classification report
+        if 'classification_report' in metrics:
+            report = metrics['classification_report']
+            print("[METRICS] Classification Report:")
+            for label in ['compliant', 'partial', 'non_compliant']:
+                if label in report:
+                    precision = report[label]['precision']
+                    recall = report[label]['recall']
+                    f1 = report[label]['f1-score']
+                    print(f"  - {label}: P={precision:.3f}, R={recall:.3f}, F1={f1:.3f}")
+        
+        # Show top features
+        if 'feature_importance' in metrics:
+            top_features = sorted(metrics['feature_importance'].items(), key=lambda x: x[1], reverse=True)[:8]
+            print("[FEATURES] Top 8 important features:")
+            for feature, importance in top_features:
+                print(f"  - {feature}: {importance:.3f}")
+        
+        print(f"[SAVED] Model saved to: {model_path}")
+        return classifier
+        
+    except Exception as e:
+        print(f"[ERROR] Error retraining model: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 
 def get_or_create_default_model():
-    """Get existing model or create a new one with default training data"""
+    """Get existing model or create a new one with comprehensive training data"""
     if not ML_DEPENDENCIES_AVAILABLE:
         print("Warning: ML dependencies not available. Cannot create ML model.")
         return None
         
     model_path = 'ml_models/compliance_model.pkl'
     
+    # Try to load existing model first
     if os.path.exists(model_path):
         try:
             classifier = ComplianceClassifier()
             classifier.load_model(model_path)
+            print(f"[SUCCESS] Loaded existing ML model from: {model_path}")
             return classifier
         except Exception as e:
-            print(f"Warning: Could not load existing model: {e}")
+            print(f"[WARNING] Could not load existing model: {e}")
+            print("[INFO] Creating new model...")
     
-    # Create new model with default training data
+    # Create new model with comprehensive training data
     try:
         classifier = ComplianceClassifier()
         training_data = create_default_training_data()
         
+        print(f"[TRAINING] Training ML model with {len(training_data)} examples...")
         metrics = classifier.train(training_data)
+        
+        # Ensure ml_models directory exists
+        os.makedirs(os.path.dirname(model_path), exist_ok=True)
         classifier.save_model(model_path)
-        print(f"Created default ML model with accuracy: {metrics['accuracy']:.2f}")
+        
+        print(f"[SUCCESS] Created ML model with {metrics['accuracy']:.1%} accuracy")
+        print(f"[SAVED] Model saved to: {model_path}")
+        
+        # Display feature importance for top features
+        if 'feature_importance' in metrics:
+            top_features = sorted(metrics['feature_importance'].items(), key=lambda x: x[1], reverse=True)[:5]
+            print("[FEATURES] Top 5 important features:")
+            for feature, importance in top_features:
+                print(f"  - {feature}: {importance:.3f}")
+        
         return classifier
+        
     except Exception as e:
-        print(f"Warning: Could not create default ML model: {e}")
+        print(f"[ERROR] Could not create ML model: {e}")
+        import traceback
+        traceback.print_exc()
         return None

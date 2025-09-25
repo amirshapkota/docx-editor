@@ -70,7 +70,9 @@ class ViewDocumentView(APIView):
                     'author': comment.author,
                     'text': comment.text,
                     'paragraph_id': comment.paragraph.paragraph_id,
-                    'created_at': comment.created_at
+                    'created_at': comment.created_at.isoformat(),
+                    'scheduled_deletion_at': comment.scheduled_deletion_at.isoformat() if comment.scheduled_deletion_at else None,
+                    'is_scheduled_for_deletion': comment.scheduled_deletion_at is not None
                 })
             
             return Response({

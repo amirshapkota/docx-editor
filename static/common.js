@@ -393,20 +393,72 @@ class DocxBase {
         dateSpan.title = `Created on ${formattedDate} at ${formattedTime}`;
         dateSpan.textContent = `${formattedDate} ${formattedTime}`;
         
-        // Create delete button
-        const deleteBtn = document.createElement('button');
-        deleteBtn.className = 'comment-delete-btn';
-        deleteBtn.innerHTML = '×';
-        deleteBtn.title = 'Delete comment';
-        deleteBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.deleteComment(comment.id);
-        });
+        // Check if comment is scheduled for deletion
+        if (comment.scheduled_deletion_at) {
+            const scheduledDate = new Date(comment.scheduled_deletion_at);
+            const countdownContainer = document.createElement('div');
+            countdownContainer.className = 'comment-countdown';
+            
+            const countdownText = document.createElement('span');
+            countdownText.className = 'countdown-text';
+            countdownContainer.appendChild(countdownText);
+            
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'comment-cancel-btn';
+            cancelBtn.textContent = 'Cancel Deletion';
+            cancelBtn.title = 'Cancel scheduled deletion';
+            cancelBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.cancelScheduledDeletion(comment.comment_id);
+            });
+            countdownContainer.appendChild(cancelBtn);
+            
+            // Start countdown timer
+            const updateCountdown = () => {
+                const now = new Date();
+                const timeLeft = scheduledDate - now;
+                
+                if (timeLeft <= 0) {
+                    countdownText.textContent = '⚠️ Comment expired - will be deleted soon';
+                    countdownText.className = 'countdown-text expired';
+                    cancelBtn.disabled = true;
+                    return;
+                }
+                
+                const minutes = Math.floor(timeLeft / (1000 * 60));
+                const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
+                countdownText.textContent = `🗑️ Deleting in ${minutes}:${seconds.toString().padStart(2, '0')}`;
+                countdownText.className = 'countdown-text warning';
+            };
+            
+            updateCountdown();
+            const countdownInterval = setInterval(updateCountdown, 1000);
+            
+            // Store interval ID for cleanup
+            countdownContainer.setAttribute('data-interval-id', countdownInterval);
+            
+            header.appendChild(countdownContainer);
+        }
+        
+        // Create delete button (only if not scheduled for deletion)
+        let deleteBtn = null;
+        if (!comment.scheduled_deletion_at) {
+            deleteBtn = document.createElement('button');
+            deleteBtn.className = 'comment-delete-btn';
+            deleteBtn.innerHTML = '×';
+            deleteBtn.title = 'Delete comment';
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.deleteComment(comment.comment_id);
+            });
+        }
         
         // Assemble header
         header.appendChild(authorSpan);
         header.appendChild(dateSpan);
-        header.appendChild(deleteBtn);
+        if (deleteBtn) {
+            header.appendChild(deleteBtn);
+        }
         
         const content = document.createElement('div');
         content.className = 'comment-content';
@@ -444,7 +496,7 @@ class DocxBase {
             }
             
             // Remove comment from local data
-            this.comments = this.comments.filter(c => c.id !== commentId);
+            this.comments = this.comments.filter(c => c.comment_id !== commentId);
             
             // Re-render comments
             this.renderComments();
@@ -454,6 +506,44 @@ class DocxBase {
         } catch (error) {
             console.error('Error deleting comment:', error);
             this.showStatus('Error deleting comment: ' + error.message, 'error');
+        }
+    }
+    
+    async cancelScheduledDeletion(commentId) {
+        try {
+            const response = await fetch('/editor/api/ml/cancel-scheduled-deletion/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    document_id: this.currentDocumentId,
+                    comment_id: commentId
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to cancel scheduled deletion');
+            }
+            
+            const result = await response.json();
+            
+            // Update local comment data to remove scheduled deletion
+            const comment = this.comments.find(c => c.id === commentId);
+            if (comment) {
+                comment.scheduled_deletion_at = null;
+                comment.is_scheduled_for_deletion = false;
+            }
+            
+            // Re-render comments to update UI
+            this.renderComments();
+            
+            this.showStatus('Scheduled deletion cancelled successfully', 'success');
+            
+        } catch (error) {
+            console.error('Error cancelling scheduled deletion:', error);
+            this.showStatus('Error cancelling scheduled deletion: ' + error.message, 'error');
         }
     }
 }

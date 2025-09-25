@@ -504,38 +504,26 @@ class EditParagraphView(XMLFormattingMixin, APIView):
                             'confidence': ml_result['confidence']
                         })
                         
-                        # Only delete comments that are truly compliant with good confidence
+                        # Schedule deletion for compliant comments (5-minute delay)
                         if final_status == 'compliant' and score >= 0.6:
-                            try:
-                                print(f"DEBUG: Attempting to delete compliant comment {comment.comment_id}")
-                                # Check file integrity before attempting DOCX operations
-                                docx_operation_success = False
-                                if os.path.exists(document.file_path):
-                                    try:
-                                        with zipfile.ZipFile(document.file_path, 'r') as test_zip:
-                                            test_zip.testzip()
-                                        self.delete_comment_from_docx(document.file_path, comment.comment_id)
-                                        docx_operation_success = True
-                                        print(f"DEBUG: Successfully deleted comment from DOCX")
-                                    except (zipfile.BadZipFile, zipfile.LargeZipFile, Exception) as zip_error:
-                                        print(f"Warning: DOCX file issue, skipping DOCX comment deletion: {zip_error}")
-                                        docx_operation_success = False
-                                else:
-                                    print(f"Warning: DOCX file not found, skipping DOCX comment deletion")
+                            # Check if comment is already scheduled for deletion
+                            if comment.scheduled_deletion_at is None:
+                                # Schedule deletion in 5 minutes
+                                from datetime import timedelta
+                                scheduled_time = timezone.now() + timedelta(minutes=5)
+                                comment.scheduled_deletion_at = scheduled_time
+                                comment.save()
                                 
-                                # Delete from database regardless of DOCX operation success
-                                comment.delete()
+                                print(f"SCHEDULED compliant comment {comment.comment_id} for deletion at {scheduled_time.strftime('%H:%M:%S')} (score: {ml_result['compliance_score']:.2f})")
                                 compliant_comment_ids.append(comment.comment_id)
-                                deleted_comment_ids.append(comment.comment_id)
-                                status_msg = "DELETED compliant comment {} (score: {:.2f}){}".format(
-                                    comment.comment_id, 
-                                    ml_result['compliance_score'],
-                                    "" if docx_operation_success else " [DB only - DOCX file issue]"
-                                )
-                                print(status_msg)
-                            except Exception as e:
-                                print(f"Warning: Could not delete compliant comment {comment.comment_id}: {e}")
+                            else:
+                                print(f"ALREADY SCHEDULED comment {comment.comment_id} for deletion at {comment.scheduled_deletion_at.strftime('%H:%M:%S')}")
                         else:
+                            # Clear any existing scheduled deletion if compliance changed
+                            if comment.scheduled_deletion_at is not None:
+                                comment.scheduled_deletion_at = None
+                                comment.save()
+                                print(f"CANCELLED scheduled deletion for comment {comment.comment_id} - no longer compliant")
                             print(f"KEEPING comment {comment.comment_id} - {ml_result['prediction']} (score: {ml_result['compliance_score']:.2f})")
                     
                     except Exception as e:
@@ -584,11 +572,11 @@ class EditParagraphView(XMLFormattingMixin, APIView):
                 'ml_compliance_results': ml_results
             }
             
-            if deleted_comment_ids:
-                response_data['deleted_comments'] = deleted_comment_ids
-                response_data['message'] = f'Paragraph updated. {len(deleted_comment_ids)} compliant comment(s) automatically deleted. {len(ml_results) - len(deleted_comment_ids)} comment(s) remain.'
+            if compliant_comment_ids:
+                response_data['scheduled_deletions'] = compliant_comment_ids
+                response_data['message'] = f'Paragraph updated. {len(compliant_comment_ids)} compliant comment(s) scheduled for deletion in 5 minutes. {len(ml_results) - len(compliant_comment_ids)} comment(s) remain.'
             elif ml_results:
-                response_data['message'] = f'Paragraph updated. {len(ml_results)} comment(s) checked - none were compliant enough for auto-deletion.'
+                response_data['message'] = f'Paragraph updated. {len(ml_results)} comment(s) checked - none were compliant enough for scheduled deletion.'
             else:
                 response_data['message'] = 'Paragraph updated.'
             
@@ -1435,11 +1423,17 @@ class GetDocumentView(APIView):
             
             comments_data = []
             for comment in document.comments.all():
+                # Debug: print the comment details
+                print(f"DEBUG: Comment {comment.comment_id}, scheduled_deletion_at: {comment.scheduled_deletion_at}")
+                
                 comments_data.append({
                     'id': comment.comment_id,
                     'author': comment.author,
                     'text': comment.text,
-                    'paragraph_id': comment.paragraph.paragraph_id
+                    'paragraph_id': comment.paragraph.paragraph_id,
+                    'created_at': comment.created_at.isoformat(),
+                    'scheduled_deletion_at': comment.scheduled_deletion_at.isoformat() if comment.scheduled_deletion_at else None,
+                    'is_scheduled_for_deletion': comment.scheduled_deletion_at is not None
                 })
             
             return Response({
@@ -1536,7 +1530,9 @@ class CheckEditComplianceRealTimeView(APIView):
                         'status': ml_result['prediction'],
                         'score': ml_result['compliance_score'],
                         'confidence': ml_result['confidence'],
-                        'model_type': ml_result['model_type']
+                        'model_type': ml_result['model_type'],
+                        'scheduled_deletion_at': comment.scheduled_deletion_at.isoformat() if comment.scheduled_deletion_at else None,
+                        'is_scheduled_for_deletion': comment.scheduled_deletion_at is not None
                     }
                     
                     compliance_results.append(result_data)
@@ -1555,7 +1551,9 @@ class CheckEditComplianceRealTimeView(APIView):
                         'status': 'error',
                         'score': 0.0,
                         'confidence': 0.0,
-                        'model_type': 'error'
+                        'model_type': 'error',
+                        'scheduled_deletion_at': comment.scheduled_deletion_at.isoformat() if comment.scheduled_deletion_at else None,
+                        'is_scheduled_for_deletion': comment.scheduled_deletion_at is not None
                     })
             
             # Calculate overall compliance

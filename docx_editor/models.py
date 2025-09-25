@@ -82,6 +82,10 @@ class Comment(models.Model):
         null=True, blank=True,
         help_text="When this comment was last checked for compliance"
     )
+    scheduled_deletion_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When this compliant comment is scheduled for automatic deletion (5 min delay)"
+    )
     
     def __str__(self):
         return f"Comment by {self.author}: {self.text[:30]}"
