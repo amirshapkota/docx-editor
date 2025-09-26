@@ -1392,7 +1392,7 @@ class DeleteCommentView(XMLFormattingMixin, APIView):
             except (AttributeError, ValueError) as e:
                 return Response({'error': 'Invalid JSON in request data'}, status=status.HTTP_400_BAD_REQUEST)
         
-        if not all([document_id, comment_id]):
+        if document_id is None or comment_id is None:
             error_msg = f'Missing required fields: document_id={document_id}, comment_id={comment_id}'
             return Response({'error': error_msg}, status=status.HTTP_400_BAD_REQUEST)
         

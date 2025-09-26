@@ -1,5 +1,10 @@
 /* Editor-specific styles */
 
+/* Test style to verify CSS is loading */
+.paragraph-wrapper {
+    position: relative;
+}
+
 /* Custom button styles for editor actions */
 .btn-small {
     width: 28px;
@@ -52,4 +57,388 @@
 
 .paragraph-wrapper:hover .paragraph-actions {
     transform: translateY(-50%) translateX(0);
+}
+
+/* ML Compliance Status Indicators */
+.paragraph-wrapper .compliance-status {
+    display: flex !important;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    margin: 8px 0;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid;
+    transition: all 0.2s ease;
+}
+
+/* Compliance status color schemes */
+.paragraph-wrapper .compliance-status.status-compliant {
+    background-color: #d4f6d4 !important;
+    border-color: #28a745 !important;
+    color: #155724 !important;
+}
+
+.paragraph-wrapper .compliance-status.status-partial {
+    background-color: #fff3cd !important;
+    border-color: #ffc107 !important;
+    color: #856404 !important;
+}
+
+.paragraph-wrapper .compliance-status.status-non_compliant {
+    background-color: #f8d7da !important;
+    border-color: #dc3545 !important;
+    color: #721c24 !important;
+}
+
+.paragraph-wrapper .compliance-status.status-checking {
+    background-color: #e2e8f0 !important;
+    border-color: #64748b !important;
+    color: #475569 !important;
+    animation: pulse 1.5s ease-in-out infinite alternate;
+}
+
+.paragraph-wrapper .compliance-status.status-error {
+    background-color: #f1f5f9 !important;
+    border-color: #94a3b8 !important;
+    color: #64748b !important;
+}
+
+@keyframes pulse {
+    from { opacity: 0.6; }
+    to { opacity: 1; }
+}
+
+.status-icon {
+    font-weight: bold;
+    font-size: 14px;
+}
+
+.status-text {
+    flex: 1;
+}
+
+.status-score {
+    font-weight: bold;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    background-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Comment Status Indicators */
+.comment-text {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.comment-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    margin-left: 8px;
+    border: 1px solid;
+}
+
+.comment-status.status-compliant {
+    background-color: #d4f6d4;
+    border-color: #28a745;
+    color: #155724;
+}
+
+.comment-status.status-partial {
+    background-color: #fff3cd;
+    border-color: #ffc107;
+    color: #856404;
+}
+
+.comment-status.status-non_compliant {
+    background-color: #f8d7da;
+    border-color: #dc3545;
+    color: #721c24;
+}
+
+.comment-status.status-checking {
+    background-color: #e2e8f0;
+    border-color: #64748b;
+    color: #475569;
+    animation: pulse 1.5s ease-in-out infinite alternate;
+}
+
+.comment-status.status-error {
+    background-color: #f1f5f9;
+    border-color: #94a3b8;
+    color: #64748b;
+}
+
+/* Improved paragraph highlighting with compliance awareness */
+.paragraph-wrapper.highlighted {
+    background-color: #e3f2fd;
+    border-left: 4px solid #2196f3;
+    padding-left: 12px;
+    transition: all 0.3s ease;
+}
+
+.paragraph-wrapper.highlighted .compliance-status {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Scheduled deletion countdown timer styles */
+.countdown-timer {
+    display: inline-block;
+    color: #ff9800;
+    font-weight: bold;
+    font-size: 12px;
+    margin-left: 8px;
+    padding: 2px 6px;
+    background-color: rgba(255, 152, 0, 0.1);
+    border-radius: 4px;
+    border: 1px solid rgba(255, 152, 0, 0.3);
+    animation: pulse-warning 2s infinite;
+}
+
+.cancel-deletion-btn {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 2px 6px;
+    font-size: 11px;
+    color: #f44336;
+    background-color: transparent;
+    border: 1px solid #f44336;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.cancel-deletion-btn:hover {
+    background-color: #f44336;
+    color: white;
+}
+
+.cancel-deletion-btn:active {
+    transform: scale(0.95);
+}
+
+@keyframes pulse-warning {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.7;
+    }
+}
+
+/* Document version display styles */
+.document-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.document-title {
+    font-weight: bold;
+    font-size: 16px;
+    color: #333;
+}
+
+.version-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.version-badge {
+    background: #4CAF50;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+.version-badge.edited {
+    background: #FF9800;
+}
+
+.version-badge.archived {
+    background: #9E9E9E;
+}
+
+.version-status {
+    font-size: 12px;
+    color: #666;
+    text-transform: capitalize;
+    padding: 2px 6px;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 4px;
+}
+
+.version-status.commented {
+    background: rgba(33, 150, 243, 0.1);
+    color: #1976D2;
+}
+
+.version-status.edited {
+    background: rgba(255, 152, 0, 0.1);
+    color: #F57C00;
+}
+
+.version-status.archived {
+    background: rgba(158, 158, 158, 0.1);
+    color: #616161;
+}
+
+.version-history-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+    border: 1px solid #ddd;
+    background: white;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.version-history-btn:hover {
+    background: #f5f5f5;
+    border-color: #999;
+}
+
+/* Version history modal styles */
+.version-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+}
+
+.version-modal-content {
+    position: relative;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    max-width: 600px;
+    width: 90%;
+    max-height: 80%;
+    overflow-y: auto;
+}
+
+.version-item {
+    padding: 12px;
+    border: 1px solid #eee;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.version-item:hover {
+    background: #f9f9f9;
+    border-color: #ddd;
+}
+
+.version-item.current {
+    border-color: #4CAF50;
+    background: rgba(76, 175, 80, 0.05);
+}
+
+.toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    border-radius: 6px 6px 0 0;
+}
+
+/* Version Modal Specific Classes */
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: #333;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #999;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-close:hover {
+    color: #333;
+}
+
+.version-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.version-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.version-date {
+    color: #666;
+    font-size: 14px;
+}
+
+.version-status-text {
+    text-transform: capitalize;
+    color: #666;
+    font-size: 14px;
+}
+
+.version-details strong {
+    color: #333;
+    display: block;
+    margin-bottom: 5px;
+}
+
+.version-meta {
+    color: #666;
+    font-size: 13px;
+    margin-bottom: 5px;
+}
+
+.version-notes {
+    color: #555;
+    font-style: italic;
+    font-size: 13px;
+    margin-top: 5px;
+    padding: 5px 10px;
+    background: #f9f9f9;
+    border-radius: 4px;
 }

@@ -55,14 +55,9 @@ class DocxBase {
         
         // Initialize version management buttons
         const versionHistoryBtn = document.getElementById('versionHistoryBtn');
-        const createVersionBtn = document.getElementById('createVersionBtn');
         
         if (versionHistoryBtn) {
             versionHistoryBtn.addEventListener('click', () => this.showVersionHistory());
-        }
-        
-        if (createVersionBtn) {
-            createVersionBtn.addEventListener('click', () => this.createNewVersion());
         }
     }
     
@@ -495,7 +490,7 @@ class DocxBase {
             return;
         }
 
-        if (!commentId) {
+        if (commentId === null || commentId === undefined) {
             this.showStatus('Error: Invalid comment ID', 'error');
             return;
         }
@@ -511,7 +506,8 @@ class DocxBase {
                 comment_id: commentId
             };
             
-            console.log(`DEBUG: Sending DELETE to ${apiPath}`, requestData);
+            console.log(`DEBUG: Sending DELETE to ${apiPath}`);
+            console.log('DEBUG: Request data:', JSON.stringify(requestData));
             
             const response = await fetch(apiPath, {
                 method: 'DELETE',
@@ -588,7 +584,6 @@ class DocxBase {
         const titleElement = document.getElementById('documentTitle');
         const versionBadge = document.getElementById('versionBadge');
         const versionStatus = document.getElementById('versionStatus');
-        const createVersionBtn = document.getElementById('createVersionBtn');
         
         if (titleElement) {
             titleElement.textContent = this.currentDocumentData.filename || 'Document';
@@ -602,13 +597,6 @@ class DocxBase {
         if (versionStatus) {
             versionStatus.textContent = this.currentDocumentData.version_status || 'original';
             versionStatus.className = `version-status ${this.currentDocumentData.version_status || 'original'}`;
-        }
-        
-        // Show create version button if document has comments and isn't already edited
-        if (createVersionBtn) {
-            const hasComments = this.comments && this.comments.length > 0;
-            const canCreateVersion = hasComments && this.currentDocumentData.version_status === 'commented';
-            createVersionBtn.style.display = canCreateVersion ? 'block' : 'none';
         }
     }
     
@@ -691,45 +679,5 @@ class DocxBase {
                 modal.remove();
             }
         });
-    }
-    
-    async createNewVersion() {
-        if (!this.currentDocumentId) return;
-        
-        const notes = prompt('Enter notes for this version (optional):');
-        if (notes === null) return; // User canceled
-        
-        try {
-            const isEditor = window.location.pathname.startsWith('/editor/');
-            const apiPath = isEditor ? '/editor/api/' : '/commenter/api/';
-            
-            const response = await fetch(`${apiPath}document/${this.currentDocumentId}/create-version/`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    document_id: this.currentDocumentId,
-                    version_notes: notes || ''
-                })
-            });
-            
-            const data = await response.json();
-            
-            if (!response.ok) {
-                throw new Error(data.error || 'Failed to create new version');
-            }
-            
-            this.showStatus(`Successfully created version ${data.data.new_version_number}!`, 'success');
-            
-            // Load the new version
-            setTimeout(() => {
-                this.loadDocument(data.data.new_version_id);
-            }, 1000);
-            
-        } catch (error) {
-            console.error('Error creating new version:', error);
-            this.showStatus('Error creating new version: ' + error.message, 'error');
-        }
     }
 }

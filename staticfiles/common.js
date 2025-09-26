@@ -1,6 +1,7 @@
 class DocxBase {
     constructor() {
         this.currentDocumentId = null;
+        this.currentDocumentData = null; // Store full document data including version info
         this.paragraphs = [];
         this.comments = [];
         this.unsavedChanges = false;
@@ -50,6 +51,13 @@ class DocxBase {
                     this.highlightParagraph(parseInt(paragraphId));
                 }
             });
+        }
+        
+        // Initialize version management buttons
+        const versionHistoryBtn = document.getElementById('versionHistoryBtn');
+        
+        if (versionHistoryBtn) {
+            versionHistoryBtn.addEventListener('click', () => this.showVersionHistory());
         }
     }
     
@@ -166,12 +174,14 @@ class DocxBase {
             }
             
             this.currentDocumentId = data.document_id;
+            this.currentDocumentData = data; // Store full document data
             this.paragraphs = data.paragraphs;
             this.comments = data.comments;
             this.unsavedChanges = false;
             
             this.renderDocument();
             this.renderComments();
+            this.updateVersionDisplay(); // Add version display
             
             // Show toolbar and comment form
             document.getElementById('toolbar').style.display = 'block';
@@ -393,20 +403,72 @@ class DocxBase {
         dateSpan.title = `Created on ${formattedDate} at ${formattedTime}`;
         dateSpan.textContent = `${formattedDate} ${formattedTime}`;
         
-        // Create delete button
-        const deleteBtn = document.createElement('button');
-        deleteBtn.className = 'comment-delete-btn';
-        deleteBtn.innerHTML = '×';
-        deleteBtn.title = 'Delete comment';
-        deleteBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.deleteComment(comment.id);
-        });
+        // Check if comment is scheduled for deletion
+        if (comment.scheduled_deletion_at) {
+            const scheduledDate = new Date(comment.scheduled_deletion_at);
+            const countdownContainer = document.createElement('div');
+            countdownContainer.className = 'comment-countdown';
+            
+            const countdownText = document.createElement('span');
+            countdownText.className = 'countdown-text';
+            countdownContainer.appendChild(countdownText);
+            
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'comment-cancel-btn';
+            cancelBtn.textContent = 'Cancel Deletion';
+            cancelBtn.title = 'Cancel scheduled deletion';
+            cancelBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.cancelScheduledDeletion(comment.id);
+            });
+            countdownContainer.appendChild(cancelBtn);
+            
+            // Start countdown timer
+            const updateCountdown = () => {
+                const now = new Date();
+                const timeLeft = scheduledDate - now;
+                
+                if (timeLeft <= 0) {
+                    countdownText.textContent = '⚠️ Comment expired - will be deleted soon';
+                    countdownText.className = 'countdown-text expired';
+                    cancelBtn.disabled = true;
+                    return;
+                }
+                
+                const minutes = Math.floor(timeLeft / (1000 * 60));
+                const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
+                countdownText.textContent = `🗑️ Deleting in ${minutes}:${seconds.toString().padStart(2, '0')}`;
+                countdownText.className = 'countdown-text warning';
+            };
+            
+            updateCountdown();
+            const countdownInterval = setInterval(updateCountdown, 1000);
+            
+            // Store interval ID for cleanup
+            countdownContainer.setAttribute('data-interval-id', countdownInterval);
+            
+            header.appendChild(countdownContainer);
+        }
+        
+        // Create delete button (only if not scheduled for deletion)
+        let deleteBtn = null;
+        if (!comment.scheduled_deletion_at) {
+            deleteBtn = document.createElement('button');
+            deleteBtn.className = 'comment-delete-btn';
+            deleteBtn.innerHTML = '×';
+            deleteBtn.title = 'Delete comment';
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.deleteComment(comment.id);
+            });
+        }
         
         // Assemble header
         header.appendChild(authorSpan);
         header.appendChild(dateSpan);
-        header.appendChild(deleteBtn);
+        if (deleteBtn) {
+            header.appendChild(deleteBtn);
+        }
         
         const content = document.createElement('div');
         content.className = 'comment-content';
@@ -423,23 +485,43 @@ class DocxBase {
             return;
         }
 
+        if (!this.currentDocumentId) {
+            this.showStatus('Error: No document loaded', 'error');
+            return;
+        }
+
+        if (commentId === null || commentId === undefined) {
+            this.showStatus('Error: Invalid comment ID', 'error');
+            return;
+        }
+
+        console.log(`DEBUG: Deleting comment ${commentId} from document ${this.currentDocumentId}`);
+
         try {
             const isEditor = window.location.pathname.startsWith('/editor/');
             const apiPath = isEditor ? '/editor/api/delete_comment/' : '/commenter/api/delete_comment/';
+            
+            const requestData = {
+                document_id: this.currentDocumentId,
+                comment_id: commentId
+            };
+            
+            console.log(`DEBUG: Sending DELETE to ${apiPath}`);
+            console.log('DEBUG: Request data:', JSON.stringify(requestData));
             
             const response = await fetch(apiPath, {
                 method: 'DELETE',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    document_id: this.currentDocumentId,
-                    comment_id: commentId
-                })
+                body: JSON.stringify(requestData)
             });
+            
+            console.log(`DEBUG: Delete response status: ${response.status}`);
             
             if (!response.ok) {
                 const errorData = await response.json();
+                console.log(`DEBUG: Error response:`, errorData);
                 throw new Error(errorData.error || 'Failed to delete comment');
             }
             
@@ -455,5 +537,147 @@ class DocxBase {
             console.error('Error deleting comment:', error);
             this.showStatus('Error deleting comment: ' + error.message, 'error');
         }
+    }
+    
+    async cancelScheduledDeletion(commentId) {
+        try {
+            const response = await fetch('/editor/api/ml/cancel-scheduled-deletion/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    document_id: this.currentDocumentId,
+                    comment_id: commentId
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to cancel scheduled deletion');
+            }
+            
+            const result = await response.json();
+            
+            // Update local comment data to remove scheduled deletion
+            const comment = this.comments.find(c => c.id === commentId);
+            if (comment) {
+                comment.scheduled_deletion_at = null;
+                comment.is_scheduled_for_deletion = false;
+            }
+            
+            // Re-render comments to update UI
+            this.renderComments();
+            
+            this.showStatus('Scheduled deletion cancelled successfully', 'success');
+            
+        } catch (error) {
+            console.error('Error cancelling scheduled deletion:', error);
+            this.showStatus('Error cancelling scheduled deletion: ' + error.message, 'error');
+        }
+    }
+    
+    // Version management methods
+    updateVersionDisplay() {
+        if (!this.currentDocumentData) return;
+        
+        const titleElement = document.getElementById('documentTitle');
+        const versionBadge = document.getElementById('versionBadge');
+        const versionStatus = document.getElementById('versionStatus');
+        
+        if (titleElement) {
+            titleElement.textContent = this.currentDocumentData.filename || 'Document';
+        }
+        
+        if (versionBadge) {
+            versionBadge.textContent = `v${this.currentDocumentData.version_number || 1}`;
+            versionBadge.className = `version-badge ${this.currentDocumentData.version_status || 'original'}`;
+        }
+        
+        if (versionStatus) {
+            versionStatus.textContent = this.currentDocumentData.version_status || 'original';
+            versionStatus.className = `version-status ${this.currentDocumentData.version_status || 'original'}`;
+        }
+    }
+    
+    async showVersionHistory() {
+        if (!this.currentDocumentId) return;
+        
+        try {
+            const isEditor = window.location.pathname.startsWith('/editor/');
+            const apiPath = isEditor ? '/editor/api/' : '/commenter/api/';
+            
+            const response = await fetch(`${apiPath}document/${this.currentDocumentId}/versions/`);
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to fetch version history');
+            }
+            
+            this.displayVersionModal(data);
+            
+        } catch (error) {
+            console.error('Error fetching version history:', error);
+            this.showStatus('Error loading version history: ' + error.message, 'error');
+        }
+    }
+    
+    displayVersionModal(versionData) {
+        // Remove existing modal if any
+        const existingModal = document.querySelector('.version-modal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+        
+        // Create modal
+        const modal = document.createElement('div');
+        modal.className = 'version-modal';
+        modal.innerHTML = `
+            <div class="version-modal-content">
+                <div class="modal-header">
+                    <h3>Version History</h3>
+                    <button class="modal-close" onclick="this.closest('.version-modal').remove()">×</button>
+                </div>
+                <div class="version-list">
+                    ${versionData.versions.map(version => `
+                        <div class="version-item ${version.is_current ? 'current' : ''}" 
+                             data-version-id="${version.id}">
+                            <div class="version-header">
+                                <span class="version-badge ${version.version_status}">v${version.version_number}</span>
+                                <span class="version-date">${new Date(version.uploaded_at).toLocaleDateString()}</span>
+                                <span class="version-status-text">${version.version_status}</span>
+                            </div>
+                            <div class="version-details">
+                                <strong>${version.filename}</strong>
+                                <div class="version-meta">
+                                    Comments: ${version.comment_count} | 
+                                    ${version.created_from_comments ? 'Created from comments' : 'Original upload'}
+                                </div>
+                                ${version.version_notes ? `<div class="version-notes">${version.version_notes}</div>` : ''}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        modal.style.display = 'block';
+        
+        // Add click handlers for version items
+        modal.querySelectorAll('.version-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const versionId = item.dataset.versionId;
+                modal.remove();
+                this.loadDocument(versionId);
+            });
+        });
+        
+        // Close modal when clicking outside
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.remove();
+            }
+        });
     }
 }

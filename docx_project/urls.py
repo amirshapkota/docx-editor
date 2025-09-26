@@ -5,7 +5,7 @@ from django.conf.urls.static import static
 from django.views.generic import RedirectView
 
 urlpatterns = [
-    path('', RedirectView.as_view(url='/commenter/', permanent=False)),
+    path('', RedirectView.as_view(url='/editor/', permanent=False)),
     path('admin/', admin.site.urls),
     path('commenter/', include('docx_commenter.urls', namespace='commenter')),
     path('editor/', include('docx_full_editor.urls', namespace='editor')),

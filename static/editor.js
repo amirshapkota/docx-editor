@@ -1,3 +1,4 @@
+// DOCX Editor JavaScript - Cache Buster: 2025-09-26-16:01
 class DocxEditor extends DocxBase {
     constructor() {
         super();
@@ -658,16 +659,17 @@ class DocxEditor extends DocxBase {
             const responseData = await response.json();
             console.log('Save paragraph success:', responseData);
             
-            // Handle automatic version creation
+            // Handle automatic version creation - Updated fix for 404 redirect issue
             if (responseData.version_created && responseData.new_version_id) {
                 console.log(`Auto-versioning occurred: ${responseData.version_message}`);
                 
                 // Show success message about version creation
                 this.showStatus(responseData.version_message, 'success');
                 
-                // Redirect to the new version after a short delay
+                // Load the new version after a short delay (stay on same page, no redirect)
                 setTimeout(() => {
-                    window.location.href = `/editor/${responseData.new_version_id}/`;
+                    console.log('Loading new document version:', responseData.new_version_id);
+                    this.loadDocument(responseData.new_version_id);
                 }, 1500);
                 
                 return; // Don't continue with normal paragraph update

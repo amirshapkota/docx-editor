@@ -93,7 +93,7 @@ class Document(models.Model):
     
     def update_status_based_on_comments(self):
         """Update version status based on comment presence"""
-        if self.has_comments() and self.version_status == 'original':
+        if self.has_comments() and self.version_status in ['original', 'edited']:
             self.version_status = 'commented'
             self.comment_count = self.comments.count()
             self.save(update_fields=['version_status', 'comment_count'])
