@@ -16,6 +16,11 @@ urlpatterns = [
     path('api/delete_comment/', views.DeleteCommentView.as_view(), name='delete_comment'),
     path('api/image/<int:image_id>/', views.ServeImageView.as_view(), name='serve_image'),
     
+    # Document Version Management
+    path('api/document/<int:document_id>/create-version/', views.CreateNewVersionView.as_view(), name='create_version'),
+    path('api/document/<int:document_id>/versions/', views.GetDocumentVersionsView.as_view(), name='get_versions'),
+    path('api/versions/stats/', views.DocumentVersionStatsView.as_view(), name='version_stats'),
+    
     # ML Compliance Checking APIs  
     path('api/ml/check-compliance/', views.CheckEditComplianceView.as_view(), name='check_compliance'),
     path('api/ml/check-compliance-realtime/', views.CheckEditComplianceRealTimeView.as_view(), name='check_compliance_realtime'),

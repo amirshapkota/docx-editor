@@ -1,6 +1,7 @@
 class DocxBase {
     constructor() {
         this.currentDocumentId = null;
+        this.currentDocumentData = null; // Store full document data including version info
         this.paragraphs = [];
         this.comments = [];
         this.unsavedChanges = false;
@@ -50,6 +51,18 @@ class DocxBase {
                     this.highlightParagraph(parseInt(paragraphId));
                 }
             });
+        }
+        
+        // Initialize version management buttons
+        const versionHistoryBtn = document.getElementById('versionHistoryBtn');
+        const createVersionBtn = document.getElementById('createVersionBtn');
+        
+        if (versionHistoryBtn) {
+            versionHistoryBtn.addEventListener('click', () => this.showVersionHistory());
+        }
+        
+        if (createVersionBtn) {
+            createVersionBtn.addEventListener('click', () => this.createNewVersion());
         }
     }
     
@@ -166,12 +179,14 @@ class DocxBase {
             }
             
             this.currentDocumentId = data.document_id;
+            this.currentDocumentData = data; // Store full document data
             this.paragraphs = data.paragraphs;
             this.comments = data.comments;
             this.unsavedChanges = false;
             
             this.renderDocument();
             this.renderComments();
+            this.updateVersionDisplay(); // Add version display
             
             // Show toolbar and comment form
             document.getElementById('toolbar').style.display = 'block';
@@ -409,7 +424,7 @@ class DocxBase {
             cancelBtn.title = 'Cancel scheduled deletion';
             cancelBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.cancelScheduledDeletion(comment.comment_id);
+                this.cancelScheduledDeletion(comment.id);
             });
             countdownContainer.appendChild(cancelBtn);
             
@@ -449,7 +464,7 @@ class DocxBase {
             deleteBtn.title = 'Delete comment';
             deleteBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                this.deleteComment(comment.comment_id);
+                this.deleteComment(comment.id);
             });
         }
         
@@ -496,7 +511,7 @@ class DocxBase {
             }
             
             // Remove comment from local data
-            this.comments = this.comments.filter(c => c.comment_id !== commentId);
+            this.comments = this.comments.filter(c => c.id !== commentId);
             
             // Re-render comments
             this.renderComments();
@@ -544,6 +559,158 @@ class DocxBase {
         } catch (error) {
             console.error('Error cancelling scheduled deletion:', error);
             this.showStatus('Error cancelling scheduled deletion: ' + error.message, 'error');
+        }
+    }
+    
+    // Version management methods
+    updateVersionDisplay() {
+        if (!this.currentDocumentData) return;
+        
+        const titleElement = document.getElementById('documentTitle');
+        const versionBadge = document.getElementById('versionBadge');
+        const versionStatus = document.getElementById('versionStatus');
+        const createVersionBtn = document.getElementById('createVersionBtn');
+        
+        if (titleElement) {
+            titleElement.textContent = this.currentDocumentData.filename || 'Document';
+        }
+        
+        if (versionBadge) {
+            versionBadge.textContent = `v${this.currentDocumentData.version_number || 1}`;
+            versionBadge.className = `version-badge ${this.currentDocumentData.version_status || 'original'}`;
+        }
+        
+        if (versionStatus) {
+            versionStatus.textContent = this.currentDocumentData.version_status || 'original';
+            versionStatus.className = `version-status ${this.currentDocumentData.version_status || 'original'}`;
+        }
+        
+        // Show create version button if document has comments and isn't already edited
+        if (createVersionBtn) {
+            const hasComments = this.comments && this.comments.length > 0;
+            const canCreateVersion = hasComments && this.currentDocumentData.version_status === 'commented';
+            createVersionBtn.style.display = canCreateVersion ? 'block' : 'none';
+        }
+    }
+    
+    async showVersionHistory() {
+        if (!this.currentDocumentId) return;
+        
+        try {
+            const isEditor = window.location.pathname.startsWith('/editor/');
+            const apiPath = isEditor ? '/editor/api/' : '/commenter/api/';
+            
+            const response = await fetch(`${apiPath}document/${this.currentDocumentId}/versions/`);
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to fetch version history');
+            }
+            
+            this.displayVersionModal(data);
+            
+        } catch (error) {
+            console.error('Error fetching version history:', error);
+            this.showStatus('Error loading version history: ' + error.message, 'error');
+        }
+    }
+    
+    displayVersionModal(versionData) {
+        // Remove existing modal if any
+        const existingModal = document.querySelector('.version-modal');
+        if (existingModal) {
+            existingModal.remove();
+        }
+        
+        // Create modal
+        const modal = document.createElement('div');
+        modal.className = 'version-modal';
+        modal.innerHTML = `
+            <div class="version-modal-content">
+                <div class="modal-header">
+                    <h3>Version History</h3>
+                    <button class="modal-close" onclick="this.closest('.version-modal').remove()">×</button>
+                </div>
+                <div class="version-list">
+                    ${versionData.versions.map(version => `
+                        <div class="version-item ${version.is_current ? 'current' : ''}" 
+                             data-version-id="${version.id}">
+                            <div class="version-header">
+                                <span class="version-badge ${version.version_status}">v${version.version_number}</span>
+                                <span class="version-date">${new Date(version.uploaded_at).toLocaleDateString()}</span>
+                                <span class="version-status-text">${version.version_status}</span>
+                            </div>
+                            <div class="version-details">
+                                <strong>${version.filename}</strong>
+                                <div class="version-meta">
+                                    Comments: ${version.comment_count} | 
+                                    ${version.created_from_comments ? 'Created from comments' : 'Original upload'}
+                                </div>
+                                ${version.version_notes ? `<div class="version-notes">${version.version_notes}</div>` : ''}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        modal.style.display = 'block';
+        
+        // Add click handlers for version items
+        modal.querySelectorAll('.version-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const versionId = item.dataset.versionId;
+                modal.remove();
+                this.loadDocument(versionId);
+            });
+        });
+        
+        // Close modal when clicking outside
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.remove();
+            }
+        });
+    }
+    
+    async createNewVersion() {
+        if (!this.currentDocumentId) return;
+        
+        const notes = prompt('Enter notes for this version (optional):');
+        if (notes === null) return; // User canceled
+        
+        try {
+            const isEditor = window.location.pathname.startsWith('/editor/');
+            const apiPath = isEditor ? '/editor/api/' : '/commenter/api/';
+            
+            const response = await fetch(`${apiPath}document/${this.currentDocumentId}/create-version/`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    document_id: this.currentDocumentId,
+                    version_notes: notes || ''
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to create new version');
+            }
+            
+            this.showStatus(`Successfully created version ${data.data.new_version_number}!`, 'success');
+            
+            // Load the new version
+            setTimeout(() => {
+                this.loadDocument(data.data.new_version_id);
+            }, 1000);
+            
+        } catch (error) {
+            console.error('Error creating new version:', error);
+            this.showStatus('Error creating new version: ' + error.message, 'error');
         }
     }
 }

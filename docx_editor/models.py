@@ -2,13 +2,101 @@ from django.db import models
 import json
 
 class Document(models.Model):
+    # Core document fields
     filename = models.CharField(max_length=255)
     file_path = models.CharField(max_length=500)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     is_editable = models.BooleanField(default=False)  # False means comment-only
     
+    # Version system fields
+    version_number = models.IntegerField(default=1, help_text='Version number (1, 2, 3, ...)')
+    parent_document = models.ForeignKey(
+        'self', 
+        on_delete=models.CASCADE, 
+        null=True, 
+        blank=True, 
+        related_name='versions',
+        help_text='Parent document this version was created from'
+    )
+    base_document = models.ForeignKey(
+        'self', 
+        on_delete=models.CASCADE, 
+        null=True, 
+        blank=True, 
+        related_name='all_versions',
+        help_text='Root/original document for this version chain'
+    )
+    
+    VERSION_STATUS_CHOICES = [
+        ('original', 'Original Upload'),
+        ('commented', 'Has Comments'),
+        ('edited', 'Edited Version'),
+        ('archived', 'Archived'),
+    ]
+    version_status = models.CharField(
+        max_length=20,
+        choices=VERSION_STATUS_CHOICES,
+        default='original',
+        help_text='Current version status in workflow'
+    )
+    
+    created_from_comments = models.BooleanField(
+        default=False, 
+        help_text='True if this version was created by processing comments'
+    )
+    comment_count = models.IntegerField(default=0, help_text='Number of comments on this version')
+    processed_comment_ids = models.JSONField(
+        default=list, 
+        blank=True,
+        help_text='List of comment IDs that were processed to create next version'
+    )
+    version_notes = models.TextField(blank=True, help_text='Notes about changes made in this version')
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['base_document', 'version_number'], name='doc_version_idx'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['base_document', 'version_number'], 
+                name='unique_version_per_base',
+                condition=models.Q(base_document__isnull=False)
+            ),
+        ]
+    
     def __str__(self):
-        return self.filename
+        base_name = self.filename
+        if self.version_number > 1:
+            return f"{base_name} v{self.version_number}"
+        return base_name
+    
+    def get_version_chain(self):
+        """Get all versions in this document's chain"""
+        from django.db.models import Q
+        base_doc = self.base_document or self
+        # Include both the base document and all documents that point to it as base
+        return Document.objects.filter(
+            Q(id=base_doc.id) | Q(base_document=base_doc)
+        ).order_by('version_number')
+    
+    def get_latest_version(self):
+        """Get the latest version in this document's chain"""
+        return self.get_version_chain().last()
+    
+    def get_next_version_number(self):
+        """Get the next version number for creating a new version"""
+        return self.get_version_chain().count() + 1
+    
+    def has_comments(self):
+        """Check if this version has any comments"""
+        return self.comments.exists()
+    
+    def update_status_based_on_comments(self):
+        """Update version status based on comment presence"""
+        if self.has_comments() and self.version_status == 'original':
+            self.version_status = 'commented'
+            self.comment_count = self.comments.count()
+            self.save(update_fields=['version_status', 'comment_count'])
     
 class DocumentImage(models.Model):
     document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='images')

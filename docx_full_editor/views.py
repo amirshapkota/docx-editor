@@ -83,6 +83,13 @@ class EditDocumentView(APIView):
         return Response({
             'document_id': document.id,
             'filename': document.filename,
+            'version_number': document.version_number,
+            'version_status': document.version_status,
+            'created_from_comments': document.created_from_comments,
+            'parent_document_id': document.parent_document_id,
+            'base_document_id': document.base_document_id,
+            'version_notes': document.version_notes,
+            'uploaded_at': document.uploaded_at,
             'paragraphs': paragraphs_data,
             'comments': comments_data
         })

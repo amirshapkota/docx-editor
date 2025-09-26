@@ -11,6 +11,7 @@ from docx_editor.models import Document, Paragraph, Comment, DocumentImage
 from docx_editor.views import UploadDocumentView as BaseUploadView
 from docx_editor.views import AddCommentView as BaseAddCommentView
 from docx_editor.views import DeleteCommentView as BaseDeleteCommentView
+from docx_editor.views import GetDocumentVersionsView, DocumentVersionStatsView
 from docx_editor.serializers import DocumentSerializer
 
 class CommentUploadDocumentView(BaseUploadView):
@@ -70,13 +71,19 @@ class ViewDocumentView(APIView):
                     'author': comment.author,
                     'text': comment.text,
                     'paragraph_id': comment.paragraph.paragraph_id,
-                    'created_at': comment.created_at.isoformat(),
-                    'scheduled_deletion_at': comment.scheduled_deletion_at.isoformat() if comment.scheduled_deletion_at else None,
-                    'is_scheduled_for_deletion': comment.scheduled_deletion_at is not None
+                    'created_at': comment.created_at
                 })
             
             return Response({
                 'document_id': document.id,
+                'filename': document.filename,
+                'version_number': document.version_number,
+                'version_status': document.version_status,
+                'created_from_comments': document.created_from_comments,
+                'parent_document_id': document.parent_document_id,
+                'base_document_id': document.base_document_id,
+                'version_notes': document.version_notes,
+                'uploaded_at': document.uploaded_at,
                 'paragraphs': paragraphs_data,
                 'comments': comments_data
             })

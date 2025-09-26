@@ -588,7 +588,7 @@ class DocxEditor extends DocxBase {
         const element = super.createCommentElement(comment);
         
         // Add data attribute for comment ID
-        element.dataset.commentId = comment.comment_id;
+        element.dataset.commentId = comment.id;
         
         // Add compliance status placeholder
         const content = element.querySelector('.comment-content');
@@ -657,6 +657,21 @@ class DocxEditor extends DocxBase {
             
             const responseData = await response.json();
             console.log('Save paragraph success:', responseData);
+            
+            // Handle automatic version creation
+            if (responseData.version_created && responseData.new_version_id) {
+                console.log(`Auto-versioning occurred: ${responseData.version_message}`);
+                
+                // Show success message about version creation
+                this.showStatus(responseData.version_message, 'success');
+                
+                // Redirect to the new version after a short delay
+                setTimeout(() => {
+                    window.location.href = `/editor/${responseData.new_version_id}/`;
+                }, 1500);
+                
+                return; // Don't continue with normal paragraph update
+            }
             
             const paraIndex = this.paragraphs.findIndex(p => p.id === paragraphId);
             if (paraIndex !== -1) {

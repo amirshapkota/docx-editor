@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from datetime import datetime
 from django.conf import settings
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.http import FileResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -15,7 +15,7 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from docx import Document as DocxDocument
-from .models import Document, Paragraph, Comment, DocumentImage
+from .models import Document, Paragraph, Comment, DocumentImage, ParagraphImage
 from .serializers import DocumentSerializer
 
 
@@ -369,11 +369,16 @@ class UploadDocumentView(APIView):
                 destination.write(chunk)
 
         try:
-            # Create document instance
+            # Create document instance with version 1
             document = Document.objects.create(
                 filename=file.name,
                 file_path=file_path,
-                is_editable=True  # Make all documents editable
+                is_editable=True,  # Make all documents editable
+                version_number=1,
+                version_status='original',
+                base_document=None,  # This is the original document
+                parent_document=None,  # No parent for original upload
+                created_from_comments=False
             )
             
             # Use enhanced parser
@@ -453,6 +458,73 @@ class EditParagraphView(XMLFormattingMixin, APIView):
                     return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
             else:
                 document = Document.objects.get(id=document_id)
+            
+            # AUTO-VERSION CREATION: If editing a commented document, create v2 first
+            if document.version_status == 'commented' and document.has_comments():
+                print(f"DEBUG: Document {document_id} is commented, auto-creating v2...")
+                
+                import os
+                import shutil
+                
+                # Create new version automatically
+                base_doc = document.base_document or document
+                next_version_number = base_doc.get_next_version_number()
+                
+                # Create new filename
+                original_name = base_doc.filename
+                name_parts = os.path.splitext(original_name)
+                new_filename = f"{name_parts[0]}_v{next_version_number}{name_parts[1]}"
+                
+                # Copy file
+                original_path = document.file_path
+                media_dir = os.path.dirname(original_path)
+                new_file_path = os.path.join(media_dir, new_filename)
+                shutil.copy2(original_path, new_file_path)
+                
+                # Create new document version
+                new_version = Document.objects.create(
+                    filename=new_filename,
+                    file_path=new_file_path,
+                    is_editable=True,
+                    version_number=next_version_number,
+                    version_status='edited',
+                    base_document=base_doc,
+                    parent_document=document,
+                    created_from_comments=True,
+                    version_notes=f'Auto-created v{next_version_number} from editor changes'
+                )
+                
+                # Copy paragraphs from current version
+                current_paragraphs = document.paragraphs.all().order_by('paragraph_id')
+                paragraph_mapping = {}
+                
+                for old_paragraph in current_paragraphs:
+                    new_paragraph = Paragraph.objects.create(
+                        document=new_version,
+                        paragraph_id=old_paragraph.paragraph_id,
+                        text=old_paragraph.text,
+                        html_content=old_paragraph.html_content,
+                        has_images=old_paragraph.has_images
+                    )
+                    paragraph_mapping[old_paragraph.paragraph_id] = new_paragraph
+                    
+                    # Copy paragraph images if any
+                    for para_image in old_paragraph.paragraph_images.all():
+                        ParagraphImage.objects.create(
+                            paragraph=new_paragraph,
+                            document_image=para_image.document_image,
+                            position_in_paragraph=para_image.position_in_paragraph
+                        )
+                
+                # Update original document status to archived
+                document.version_status = 'archived'
+                document.save()
+                
+                # Switch to editing the new version
+                document = new_version
+                document_id = new_version.id
+                
+                print(f"DEBUG: Auto-created v{next_version_number} (ID: {new_version.id}), now editing new version")
             
             paragraph = Paragraph.objects.get(document=document, paragraph_id=paragraph_id)
             print(f"DEBUG: Found paragraph {paragraph_id}, processing ML compliance checks...")
@@ -569,8 +641,16 @@ class EditParagraphView(XMLFormattingMixin, APIView):
             response_data = {
                 'paragraph_id': paragraph.paragraph_id,
                 'text': paragraph.text,
-                'ml_compliance_results': ml_results
+                'ml_compliance_results': ml_results,
+                'document_id': document.id  # Include current document ID (may have changed due to auto-versioning)
             }
+            
+            # Add version information if auto-versioning occurred
+            if document.id != int(request.data.get('document_id')):
+                response_data['version_created'] = True
+                response_data['new_version_id'] = document.id
+                response_data['new_version_number'] = document.version_number
+                response_data['version_message'] = f'Automatically created v{document.version_number} for editing'
             
             if compliant_comment_ids:
                 response_data['scheduled_deletions'] = compliant_comment_ids
@@ -1076,6 +1156,9 @@ class AddCommentView(XMLFormattingMixin, APIView):
                 text=text
             )
             
+            # Update document status to 'commented' if it was 'original'
+            document.update_status_based_on_comments()
+            
             # Try to add comment to DOCX file
             docx_success = True
             docx_error = None
@@ -1343,7 +1426,15 @@ class ListDocumentsView(APIView):
                 'id': doc.id,
                 'filename': doc.filename,
                 'uploaded_at': doc.uploaded_at.isoformat(),
-                'comment_count': doc.comment_count
+                'comment_count': doc.comment_count,
+                # Version information
+                'version_number': doc.version_number,
+                'version_status': doc.version_status,
+                'is_original': doc.version_number == 1,
+                'parent_document_id': doc.parent_document.id if doc.parent_document else None,
+                'base_document_id': doc.base_document.id if doc.base_document else doc.id,
+                'created_from_comments': doc.created_from_comments,
+                'version_notes': doc.version_notes
             })
         
         return Response(documents_data)
@@ -1423,20 +1514,23 @@ class GetDocumentView(APIView):
             
             comments_data = []
             for comment in document.comments.all():
-                # Debug: print the comment details
-                print(f"DEBUG: Comment {comment.comment_id}, scheduled_deletion_at: {comment.scheduled_deletion_at}")
-                
                 comments_data.append({
                     'id': comment.comment_id,
                     'author': comment.author,
                     'text': comment.text,
-                    'paragraph_id': comment.paragraph.paragraph_id,
-                    'created_at': comment.created_at.isoformat(),
-                    'scheduled_deletion_at': comment.scheduled_deletion_at.isoformat() if comment.scheduled_deletion_at else None,
-                    'is_scheduled_for_deletion': comment.scheduled_deletion_at is not None
+                    'paragraph_id': comment.paragraph.paragraph_id
                 })
             
             return Response({
+                'document_id': document.id,
+                'filename': document.filename,
+                'version_number': document.version_number,
+                'version_status': document.version_status,
+                'created_from_comments': document.created_from_comments,
+                'parent_document_id': document.parent_document.id if document.parent_document else None,
+                'base_document_id': document.base_document.id if document.base_document else document.id,
+                'version_notes': document.version_notes,
+                'uploaded_at': document.uploaded_at.isoformat(),
                 'paragraphs': paragraphs_data,
                 'comments': comments_data
             })
@@ -1832,6 +1926,232 @@ class MLModelStatusView(APIView):
                 'ml_available': ML_DEPENDENCIES_AVAILABLE,
                 'description': 'Basic rule-based compliance checker (full ML dependencies available for upgrade)'
             })
+            
+        except Exception as e:
+            print(f"ERROR: MLModelStatusView failed: {e}")
+            return Response({
+                'model_loaded': False,
+                'model_type': 'Error',
+                'status': 'error',
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+
+class CreateNewVersionView(XMLFormattingMixin, APIView):
+    """
+    Create a new version of a document based on processed comments.
+    This is the core workflow: v1 + comments → v2
+    """
+    
+    def post(self, request):
+        """
+        Create a new version by processing comments from the current version
+        Expected data:
+        {
+            "document_id": int,  # Current version ID
+            "version_notes": str,  # Optional notes about the changes
+            "selected_comment_ids": [int],  # Optional: specific comments to process
+        }
+        """
+        document_id = request.data.get('document_id')
+        version_notes = request.data.get('version_notes', '')
+        selected_comment_ids = request.data.get('selected_comment_ids', [])
+        
+        if not document_id:
+            return Response({'error': 'Missing required field: document_id'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Get current version
+            current_version = Document.objects.get(id=document_id)
+            
+            # Validate that current version has comments
+            if not current_version.has_comments():
+                return Response({
+                    'error': 'Document has no comments to process'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get base document (or use current as base if it's the original)
+            base_doc = current_version.base_document or current_version
+            
+            # Calculate next version number
+            next_version_number = base_doc.get_next_version_number()
+            
+            # Create new filename for the new version
+            original_name = base_doc.filename
+            name_parts = os.path.splitext(original_name)
+            new_filename = f"{name_parts[0]}_v{next_version_number}{name_parts[1]}"
+            
+            # Copy the DOCX file to a new location
+            original_path = current_version.file_path
+            media_dir = os.path.dirname(original_path)
+            new_file_path = os.path.join(media_dir, new_filename)
+            
+            import shutil
+            shutil.copy2(original_path, new_file_path)
+            
+            # Create new document version
+            new_version = Document.objects.create(
+                filename=new_filename,
+                file_path=new_file_path,
+                is_editable=True,
+                version_number=next_version_number,
+                version_status='edited',
+                base_document=base_doc,
+                parent_document=current_version,
+                created_from_comments=True,
+                version_notes=version_notes
+            )
+            
+            # Copy paragraphs from current version
+            current_paragraphs = current_version.paragraphs.all().order_by('paragraph_id')
+            paragraph_mapping = {}  # Map old paragraph IDs to new objects
+            
+            for old_paragraph in current_paragraphs:
+                new_paragraph = Paragraph.objects.create(
+                    document=new_version,
+                    paragraph_id=old_paragraph.paragraph_id,
+                    text=old_paragraph.text,
+                    html_content=old_paragraph.html_content,
+                    has_images=old_paragraph.has_images
+                )
+                paragraph_mapping[old_paragraph.paragraph_id] = new_paragraph
+                
+                # Copy paragraph images if any
+                for para_image in old_paragraph.paragraph_images.all():
+                    # Note: We're reusing the same DocumentImage objects
+                    # since they're shared across versions
+                    ParagraphImage.objects.create(
+                        paragraph=new_paragraph,
+                        document_image=para_image.document_image,
+                        position_in_paragraph=para_image.position_in_paragraph
+                    )
+            
+            # Get comments to process
+            if selected_comment_ids:
+                comments_to_process = current_version.comments.filter(
+                    comment_id__in=selected_comment_ids
+                )
+            else:
+                comments_to_process = current_version.comments.all()
+            
+            # Record which comments were processed
+            processed_ids = list(comments_to_process.values_list('comment_id', flat=True))
+            new_version.processed_comment_ids = processed_ids
+            new_version.save()
+            
+            # Update current version status
+            current_version.version_status = 'archived'
+            current_version.save()
+            
+            # Parse the new document to update content
+            from .docx_parser import EnhancedDocxParser
+            parser = EnhancedDocxParser(new_file_path, new_version)
+            paragraphs_data = parser.parse_document()
+            
+            return Response({
+                'status': 'success',
+                'message': f'Successfully created version {next_version_number}',
+                'data': {
+                    'new_version_id': new_version.id,
+                    'new_version_number': next_version_number,
+                    'filename': new_filename,
+                    'processed_comments': len(processed_ids),
+                    'comment_ids_processed': processed_ids,
+                    'paragraphs_count': len(paragraphs_data),
+                    'version_notes': version_notes
+                }
+            })
+            
+        except Document.DoesNotExist:
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            print(f"Error creating new version: {e}")
+            return Response({
+                'error': f'Error creating new version: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class GetDocumentVersionsView(APIView):
+    """
+    Get all versions of a document chain
+    """
+    
+    def get(self, request, document_id):
+        try:
+            document = Document.objects.get(id=document_id)
+            base_doc = document.base_document or document
+            
+            versions = Document.objects.filter(
+                Q(id=base_doc.id) | Q(base_document=base_doc)
+            ).order_by('version_number')
+            
+            versions_data = []
+            for version in versions:
+                versions_data.append({
+                    'id': version.id,
+                    'version_number': version.version_number,
+                    'filename': version.filename,
+                    'version_status': version.version_status,
+                    'created_from_comments': version.created_from_comments,
+                    'comment_count': version.comments.count(),
+                    'uploaded_at': version.uploaded_at.isoformat(),
+                    'version_notes': version.version_notes,
+                    'processed_comment_ids': version.processed_comment_ids,
+                    'is_current': version.id == document.id
+                })
+            
+            return Response({
+                'base_document_id': base_doc.id,
+                'current_version_id': document.id,
+                'total_versions': len(versions_data),
+                'versions': versions_data
+            })
+            
+        except Document.DoesNotExist:
+            return Response({'error': 'Document not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': f'Error retrieving versions: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DocumentVersionStatsView(APIView):
+    """
+    Get statistics about document versions and workflow
+    """
+    
+    def get(self, request):
+        try:
+            total_documents = Document.objects.count()
+            original_documents = Document.objects.filter(version_number=1).count()
+            edited_versions = Document.objects.filter(version_number__gt=1).count()
+            
+            # Status distribution
+            status_counts = {}
+            for status_choice in Document.VERSION_STATUS_CHOICES:
+                status_key = status_choice[0]
+                status_counts[status_key] = Document.objects.filter(version_status=status_key).count()
+            
+            # Comments to processing stats
+            commented_docs = Document.objects.filter(version_status='commented').count()
+            docs_with_comments = Document.objects.filter(comments__isnull=False).distinct().count()
+            
+            return Response({
+                'total_documents': total_documents,
+                'original_documents': original_documents,
+                'edited_versions': edited_versions,
+                'status_distribution': status_counts,
+                'workflow_stats': {
+                    'commented_documents': commented_docs,
+                    'documents_with_comments': docs_with_comments,
+                    'ready_for_editing': commented_docs
+                }
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'Error retrieving stats: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
         except Exception as e:
             return Response({

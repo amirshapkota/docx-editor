@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Document Commenter</title>
     <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles_new.css">
 </head>
 <body class="commenter-page">
     <div class="container">
@@ -27,6 +28,14 @@
         <div class="main-content">
             <div class="document-panel">
                 <div class="toolbar" id="toolbar" style="display: none;">
+                    <div class="document-info">
+                        <div class="document-title" id="documentTitle">Document</div>
+                        <div class="version-info" id="versionInfo">
+                            <span class="version-badge" id="versionBadge">v1</span>
+                            <span class="version-status" id="versionStatus">original</span>
+                            <button class="btn-small version-history-btn" id="versionHistoryBtn" title="View version history">📋</button>
+                        </div>
+                    </div>
                     <span class="save-status" id="saveStatus">Ready</span>
                 </div>
                 

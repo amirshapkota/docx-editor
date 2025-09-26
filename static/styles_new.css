@@ -234,3 +234,221 @@
         opacity: 0.7;
     }
 }
+
+/* Document version display styles */
+.document-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.document-title {
+    font-weight: bold;
+    font-size: 16px;
+    color: #333;
+}
+
+.version-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.version-badge {
+    background: #4CAF50;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+.version-badge.edited {
+    background: #FF9800;
+}
+
+.version-badge.archived {
+    background: #9E9E9E;
+}
+
+.version-status {
+    font-size: 12px;
+    color: #666;
+    text-transform: capitalize;
+    padding: 2px 6px;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 4px;
+}
+
+.version-status.commented {
+    background: rgba(33, 150, 243, 0.1);
+    color: #1976D2;
+}
+
+.version-status.edited {
+    background: rgba(255, 152, 0, 0.1);
+    color: #F57C00;
+}
+
+.version-status.archived {
+    background: rgba(158, 158, 158, 0.1);
+    color: #616161;
+}
+
+.version-history-btn, .create-version-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+    border: 1px solid #ddd;
+    background: white;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.version-history-btn:hover, .create-version-btn:hover {
+    background: #f5f5f5;
+    border-color: #999;
+}
+
+.create-version-btn {
+    background: linear-gradient(45deg, #4CAF50, #45a049);
+    color: white;
+    border-color: #4CAF50;
+}
+
+.create-version-btn:hover {
+    background: linear-gradient(45deg, #45a049, #3d8b40);
+}
+
+/* Version history modal styles */
+.version-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+}
+
+.version-modal-content {
+    position: relative;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    max-width: 600px;
+    width: 90%;
+    max-height: 80%;
+    overflow-y: auto;
+}
+
+.version-item {
+    padding: 12px;
+    border: 1px solid #eee;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.version-item:hover {
+    background: #f9f9f9;
+    border-color: #ddd;
+}
+
+.version-item.current {
+    border-color: #4CAF50;
+    background: rgba(76, 175, 80, 0.05);
+}
+
+.toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    background: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    border-radius: 6px 6px 0 0;
+}
+
+/* Version Modal Specific Classes */
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #eee;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: #333;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #999;
+    padding: 0;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-close:hover {
+    color: #333;
+}
+
+.version-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.version-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.version-date {
+    color: #666;
+    font-size: 14px;
+}
+
+.version-status-text {
+    text-transform: capitalize;
+    color: #666;
+    font-size: 14px;
+}
+
+.version-details strong {
+    color: #333;
+    display: block;
+    margin-bottom: 5px;
+}
+
+.version-meta {
+    color: #666;
+    font-size: 13px;
+    margin-bottom: 5px;
+}
+
+.version-notes {
+    color: #555;
+    font-style: italic;
+    font-size: 13px;
+    margin-top: 5px;
+    padding: 5px 10px;
+    background: #f9f9f9;
+    border-radius: 4px;
+}

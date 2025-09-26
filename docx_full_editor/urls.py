@@ -5,7 +5,10 @@ from docx_editor.views import (
     CheckEditComplianceRealTimeView,
     CheckEditComplianceView,
     CheckParagraphComplianceView,
-    MLModelStatusView
+    MLModelStatusView,
+    GetDocumentVersionsView,
+    DocumentVersionStatsView,
+    CreateNewVersionView
 )
 
 app_name = 'docx_full_editor'
@@ -24,6 +27,11 @@ urlpatterns = [
     path('api/delete_paragraph/', views.DeleteParagraphView.as_view(), name='delete_paragraph'),
     path('api/add_comment/', views.AddCommentView.as_view(), name='add_comment'),
     path('api/delete_comment/', views.DeleteCommentView.as_view(), name='delete_comment'),
+    
+    # Version management endpoints
+    path('api/document/<int:document_id>/create-version/', CreateNewVersionView.as_view(), name='create_version'),
+    path('api/document/<int:document_id>/versions/', GetDocumentVersionsView.as_view(), name='get_versions'),
+    path('api/versions/stats/', DocumentVersionStatsView.as_view(), name='version_stats'),
     
     # ML Compliance Checking APIs  
     path('api/ml/check-compliance/', CheckEditComplianceView.as_view(), name='check_compliance'),
