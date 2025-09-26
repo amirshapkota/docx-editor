@@ -1379,14 +1379,22 @@ class DeleteCommentView(XMLFormattingMixin, APIView):
     def delete(self, request):
         # Parse JSON data from request body for DELETE requests
         try:
-            data = request.data
+            import json
+            data = json.loads(request.body.decode('utf-8'))
             document_id = data.get('document_id')
             comment_id = data.get('comment_id')
-        except (AttributeError, ValueError) as e:
-            return Response({'error': 'Invalid JSON in request data'}, status=status.HTTP_400_BAD_REQUEST)
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+            # Fallback to request.data if JSON parsing fails
+            try:
+                data = request.data
+                document_id = data.get('document_id')
+                comment_id = data.get('comment_id')
+            except (AttributeError, ValueError) as e:
+                return Response({'error': 'Invalid JSON in request data'}, status=status.HTTP_400_BAD_REQUEST)
         
         if not all([document_id, comment_id]):
-            return Response({'error': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
+            error_msg = f'Missing required fields: document_id={document_id}, comment_id={comment_id}'
+            return Response({'error': error_msg}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
             document = Document.objects.get(id=document_id)

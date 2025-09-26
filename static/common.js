@@ -490,23 +490,42 @@ class DocxBase {
             return;
         }
 
+        if (!this.currentDocumentId) {
+            this.showStatus('Error: No document loaded', 'error');
+            return;
+        }
+
+        if (!commentId) {
+            this.showStatus('Error: Invalid comment ID', 'error');
+            return;
+        }
+
+        console.log(`DEBUG: Deleting comment ${commentId} from document ${this.currentDocumentId}`);
+
         try {
             const isEditor = window.location.pathname.startsWith('/editor/');
             const apiPath = isEditor ? '/editor/api/delete_comment/' : '/commenter/api/delete_comment/';
+            
+            const requestData = {
+                document_id: this.currentDocumentId,
+                comment_id: commentId
+            };
+            
+            console.log(`DEBUG: Sending DELETE to ${apiPath}`, requestData);
             
             const response = await fetch(apiPath, {
                 method: 'DELETE',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({
-                    document_id: this.currentDocumentId,
-                    comment_id: commentId
-                })
+                body: JSON.stringify(requestData)
             });
+            
+            console.log(`DEBUG: Delete response status: ${response.status}`);
             
             if (!response.ok) {
                 const errorData = await response.json();
+                console.log(`DEBUG: Error response:`, errorData);
                 throw new Error(errorData.error || 'Failed to delete comment');
             }
             
