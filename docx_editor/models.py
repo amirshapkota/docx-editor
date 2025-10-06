@@ -50,6 +50,11 @@ class Document(models.Model):
         blank=True,
         help_text='List of comment IDs that were processed to create next version'
     )
+    edited_commented_paragraphs = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='List of paragraph IDs with comments that have been edited'
+    )
     version_notes = models.TextField(blank=True, help_text='Notes about changes made in this version')
     
     class Meta:
@@ -97,6 +102,28 @@ class Document(models.Model):
             self.version_status = 'commented'
             self.comment_count = self.comments.count()
             self.save(update_fields=['version_status', 'comment_count'])
+    
+    def get_commented_paragraph_ids(self):
+        """Get list of paragraph IDs that have comments"""
+        return list(self.comments.values_list('paragraph__paragraph_id', flat=True).distinct())
+    
+    def mark_paragraph_edited(self, paragraph_id):
+        """Mark a paragraph with comments as edited"""
+        if paragraph_id not in self.edited_commented_paragraphs:
+            self.edited_commented_paragraphs.append(paragraph_id)
+            self.save(update_fields=['edited_commented_paragraphs'])
+    
+    def all_commented_paragraphs_edited(self):
+        """Check if all paragraphs with comments have been edited"""
+        commented_paragraph_ids = self.get_commented_paragraph_ids()
+        if not commented_paragraph_ids:
+            return False
+        return set(commented_paragraph_ids).issubset(set(self.edited_commented_paragraphs))
+    
+    def get_remaining_commented_paragraphs(self):
+        """Get list of paragraph IDs with comments that haven't been edited yet"""
+        commented_paragraph_ids = self.get_commented_paragraph_ids()
+        return [pid for pid in commented_paragraph_ids if pid not in self.edited_commented_paragraphs]
     
 class DocumentImage(models.Model):
     document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='images')

@@ -9,6 +9,9 @@ class DocxEditor extends DocxBase {
         this.initCommentForm();
         this.initExportButton();
         this.loadDocumentsList();
+        
+        // Track edited commented paragraphs
+        this.editedCommentedParagraphs = [];
     }
 
     async loadDocumentsList() {
@@ -319,12 +322,23 @@ class DocxEditor extends DocxBase {
             // Store latest compliance result
             this.lastComplianceCheck[paragraphId] = data;
             
+            // Collect constraint violations for display
+            let allConstraintViolations = [];
+            if (data.compliance_results) {
+                for (const result of data.compliance_results) {
+                    if (result.constraint_validation && result.constraint_validation.violations) {
+                        allConstraintViolations.push(...result.constraint_validation.violations);
+                    }
+                }
+            }
+            
             // Update UI with compliance status
             this.showComplianceStatus(
                 paragraphId, 
                 data.overall_status, 
                 data.overall_score,
-                this.formatComplianceMessage(data)
+                this.formatComplianceMessage(data),
+                allConstraintViolations.length > 0 ? allConstraintViolations : null
             );
             
             // Update comment statuses
@@ -345,16 +359,33 @@ class DocxEditor extends DocxBase {
         const score = Math.round(data.overall_score * 100);
         let message = `${data.total_comments} comment${data.total_comments > 1 ? 's' : ''} - ${score}% compliance`;
         
+        // Check for constraint violations in any of the compliance results
+        let totalConstraintViolations = 0;
+        let constraintDetails = [];
+        
+        if (data.compliance_results) {
+            for (const result of data.compliance_results) {
+                if (result.constraint_validation && result.constraint_validation.violations) {
+                    totalConstraintViolations += result.constraint_validation.violations.length;
+                    constraintDetails.push(...result.constraint_validation.violations);
+                }
+            }
+        }
+        
+        if (totalConstraintViolations > 0) {
+            message += ` (${totalConstraintViolations} constraint violation${totalConstraintViolations > 1 ? 's' : ''})`;
+        }
+        
         if (data.can_auto_delete) {
-            message += ' Can auto-delete';
+            message += ' ✅ Can auto-delete';
         } else {
-            message += ' Needs attention';
+            message += ' ⚠️ Needs attention';
         }
         
         return message;
     }
 
-    showComplianceStatus(paragraphId, status, score, message) {
+    showComplianceStatus(paragraphId, status, score, message, constraintDetails = null) {
         const wrapper = document.querySelector(`.paragraph-wrapper[data-id="${paragraphId}"]`);
         if (!wrapper) {
             console.log('Could not find paragraph wrapper for ID:', paragraphId);
@@ -419,11 +450,27 @@ class DocxEditor extends DocxBase {
             transition: all 0.2s ease;
         `;
         
-        statusElement.innerHTML = `
+        let statusHTML = `
             <span class="status-icon">${this.getStatusIcon(status)}</span>
             <span class="status-text" style="flex: 1;">${message}</span>
             <span class="status-score" style="font-weight: bold; font-size: 12px; padding: 2px 6px; border-radius: 10px; background-color: rgba(0,0,0,0.1);">${Math.round(score * 100)}%</span>
         `;
+        
+        // Add constraint details if available
+        if (constraintDetails && constraintDetails.length > 0) {
+            statusHTML += `
+                <div class="constraint-details" style="margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(0,0,0,0.1); width: 100%;">
+                    <div style="font-size: 11px; font-weight: bold; margin-bottom: 4px;">Constraint Issues:</div>
+            `;
+            
+            constraintDetails.forEach(detail => {
+                statusHTML += `<div style="font-size: 11px; margin: 2px 0;">• ${detail}</div>`;
+            });
+            
+            statusHTML += '</div>';
+        }
+        
+        statusElement.innerHTML = statusHTML;
         
         // Insert before actions
         const actions = wrapper.querySelector('.paragraph-actions');
@@ -659,7 +706,7 @@ class DocxEditor extends DocxBase {
             const responseData = await response.json();
             console.log('Save paragraph success:', responseData);
             
-            // Handle automatic version creation - Updated fix for 404 redirect issue
+            // Handle automatic version creation - Updated for new behavior
             if (responseData.version_created && responseData.new_version_id) {
                 console.log(`Auto-versioning occurred: ${responseData.version_message}`);
                 
@@ -673,6 +720,16 @@ class DocxEditor extends DocxBase {
                 }, 1500);
                 
                 return; // Don't continue with normal paragraph update
+            }
+            
+            // Show progress message if available (when not all commented paragraphs are edited yet)
+            if (responseData.version_message && !responseData.version_created) {
+                this.showStatus(responseData.version_message, 'info');
+            }
+            
+            // Show regular response message if available
+            if (responseData.message) {
+                this.showStatus(responseData.message, 'success');
             }
             
             const paraIndex = this.paragraphs.findIndex(p => p.id === paragraphId);
@@ -905,6 +962,100 @@ class DocxEditor extends DocxBase {
             console.error('Error inserting paragraph:', error);
             this.showStatus(`Error inserting paragraph: ${error.message}`, 'error');
         }
+    }
+    
+    // Progress tracking for commented paragraph editing
+    updateProgressTracker() {
+        if (!this.currentDocumentData || this.currentDocumentData.version_status !== 'commented') {
+            this.hideProgressTracker();
+            return;
+        }
+        
+        const commentedParagraphs = this.getCommentedParagraphIds();
+        if (commentedParagraphs.length === 0) {
+            this.hideProgressTracker();
+            return;
+        }
+        
+        // Get edited commented paragraphs from document data or track locally
+        const editedParagraphs = this.currentDocumentData.edited_commented_paragraphs || [];
+        const progress = editedParagraphs.length;
+        const total = commentedParagraphs.length;
+        const percentage = total > 0 ? (progress / total) * 100 : 0;
+        
+        this.showProgressTracker(progress, total, percentage);
+        this.updateParagraphIndicators(commentedParagraphs, editedParagraphs);
+    }
+    
+    getCommentedParagraphIds() {
+        if (!this.comments || !Array.isArray(this.comments)) return [];
+        return [...new Set(this.comments.map(c => c.paragraph_id))];
+    }
+    
+    showProgressTracker(progress, total, percentage) {
+        let tracker = document.querySelector('.version-progress');
+        if (!tracker) {
+            tracker = document.createElement('div');
+            tracker.className = 'version-progress';
+            
+            const toolbar = document.getElementById('toolbar');
+            if (toolbar) {
+                toolbar.parentNode.insertBefore(tracker, toolbar.nextSibling);
+            }
+        }
+        
+        const isComplete = progress >= total;
+        tracker.className = `version-progress ${isComplete ? 'complete' : ''}`;
+        
+        tracker.innerHTML = `
+            <div class="progress-text">
+                ${isComplete 
+                    ? `✅ All commented paragraphs edited - new version will be created next!`
+                    : `📝 Editing progress: ${progress}/${total} commented paragraphs edited`
+                }
+            </div>
+            <div class="progress-bar-container">
+                <div class="progress-bar" style="width: ${percentage}%"></div>
+            </div>
+        `;
+    }
+    
+    hideProgressTracker() {
+        const tracker = document.querySelector('.version-progress');
+        if (tracker) {
+            tracker.remove();
+        }
+    }
+    
+    updateParagraphIndicators(commentedParagraphs, editedParagraphs) {
+        // Remove existing indicators
+        document.querySelectorAll('.paragraph-wrapper').forEach(wrapper => {
+            wrapper.classList.remove('has-unedited-comments', 'comment-edited');
+        });
+        
+        // Add indicators for commented paragraphs
+        commentedParagraphs.forEach(paragraphId => {
+            const wrapper = document.querySelector(`.paragraph-wrapper[data-id="${paragraphId}"]`);
+            if (wrapper) {
+                if (editedParagraphs.includes(paragraphId)) {
+                    wrapper.classList.add('comment-edited');
+                } else {
+                    wrapper.classList.add('has-unedited-comments');
+                }
+            }
+        });
+    }
+    
+    // Override the loadDocument method to include progress tracking
+    async loadDocument(documentId) {
+        await super.loadDocument(documentId);
+        this.updateProgressTracker();
+    }
+    
+    // Override renderDocument to update progress after rendering
+    renderDocument() {
+        super.renderDocument();
+        this.updateProgressTracker();
     }
 }
 

@@ -459,72 +459,96 @@ class EditParagraphView(XMLFormattingMixin, APIView):
             else:
                 document = Document.objects.get(id=document_id)
             
-            # AUTO-VERSION CREATION: If editing a commented document, create v2 first
-            if document.version_status == 'commented' and document.has_comments():
-                print(f"DEBUG: Document {document_id} is commented, auto-creating v2...")
+            # TRACK EDITED PARAGRAPHS: Mark this paragraph as edited if it has comments
+            paragraph_has_comments = Comment.objects.filter(
+                document=document, 
+                paragraph__paragraph_id=paragraph_id
+            ).exists()
+            
+            version_created = False
+            new_version_id = None
+            new_version_number = None
+            version_message = None
+            
+            if paragraph_has_comments and document.version_status == 'commented':
+                # Mark this paragraph as edited
+                document.mark_paragraph_edited(paragraph_id)
+                print(f"DEBUG: Marked paragraph {paragraph_id} as edited")
                 
-                import os
-                import shutil
-                
-                # Create new version automatically
-                base_doc = document.base_document or document
-                next_version_number = base_doc.get_next_version_number()
-                
-                # Create new filename
-                original_name = base_doc.filename
-                name_parts = os.path.splitext(original_name)
-                new_filename = f"{name_parts[0]}_v{next_version_number}{name_parts[1]}"
-                
-                # Copy file
-                original_path = document.file_path
-                media_dir = os.path.dirname(original_path)
-                new_file_path = os.path.join(media_dir, new_filename)
-                shutil.copy2(original_path, new_file_path)
-                
-                # Create new document version
-                new_version = Document.objects.create(
-                    filename=new_filename,
-                    file_path=new_file_path,
-                    is_editable=True,
-                    version_number=next_version_number,
-                    version_status='edited',
-                    base_document=base_doc,
-                    parent_document=document,
-                    created_from_comments=True,
-                    version_notes=f'Auto-created v{next_version_number} from editor changes'
-                )
-                
-                # Copy paragraphs from current version
-                current_paragraphs = document.paragraphs.all().order_by('paragraph_id')
-                paragraph_mapping = {}
-                
-                for old_paragraph in current_paragraphs:
-                    new_paragraph = Paragraph.objects.create(
-                        document=new_version,
-                        paragraph_id=old_paragraph.paragraph_id,
-                        text=old_paragraph.text,
-                        html_content=old_paragraph.html_content,
-                        has_images=old_paragraph.has_images
-                    )
-                    paragraph_mapping[old_paragraph.paragraph_id] = new_paragraph
+                # Check if all commented paragraphs have been edited
+                if document.all_commented_paragraphs_edited():
+                    print(f"DEBUG: All commented paragraphs have been edited, creating new version...")
                     
-                    # Copy paragraph images if any
-                    for para_image in old_paragraph.paragraph_images.all():
-                        ParagraphImage.objects.create(
-                            paragraph=new_paragraph,
-                            document_image=para_image.document_image,
-                            position_in_paragraph=para_image.position_in_paragraph
+                    import os
+                    import shutil
+                    
+                    # Create new version automatically
+                    base_doc = document.base_document or document
+                    next_version_number = base_doc.get_next_version_number()
+                    
+                    # Create new filename
+                    original_name = base_doc.filename
+                    name_parts = os.path.splitext(original_name)
+                    new_filename = f"{name_parts[0]}_v{next_version_number}{name_parts[1]}"
+                    
+                    # Copy file
+                    original_path = document.file_path
+                    media_dir = os.path.dirname(original_path)
+                    new_file_path = os.path.join(media_dir, new_filename)
+                    shutil.copy2(original_path, new_file_path)
+                    
+                    # Create new document version
+                    new_version = Document.objects.create(
+                        filename=new_filename,
+                        file_path=new_file_path,
+                        is_editable=True,
+                        version_number=next_version_number,
+                        version_status='edited',
+                        base_document=base_doc,
+                        parent_document=document,
+                        created_from_comments=True,
+                        version_notes=f'Auto-created v{next_version_number} - all commented paragraphs edited'
+                    )
+                    
+                    # Copy paragraphs from current version
+                    current_paragraphs = document.paragraphs.all().order_by('paragraph_id')
+                    paragraph_mapping = {}
+                    
+                    for old_paragraph in current_paragraphs:
+                        new_paragraph = Paragraph.objects.create(
+                            document=new_version,
+                            paragraph_id=old_paragraph.paragraph_id,
+                            text=old_paragraph.text,
+                            html_content=old_paragraph.html_content,
+                            has_images=old_paragraph.has_images
                         )
-                
-                # Update original document status to archived
-                document.version_status = 'archived'
-                document.save()
-                
-                # Switch to editing the new version
-                document = new_version
-                document_id = new_version.id
-                
-                print(f"DEBUG: Auto-created v{next_version_number} (ID: {new_version.id}), now editing new version")
+                        paragraph_mapping[old_paragraph.paragraph_id] = new_paragraph
+                        
+                        # Copy paragraph images if any
+                        for para_image in old_paragraph.paragraph_images.all():
+                            ParagraphImage.objects.create(
+                                paragraph=new_paragraph,
+                                document_image=para_image.document_image,
+                                position_in_paragraph=para_image.position_in_paragraph
+                            )
+                    
+                    # Update original document status to archived
+                    document.version_status = 'archived'
+                    document.save()
+                    
+                    # Switch to editing the new version
+                    document = new_version
+                    document_id = new_version.id
+                    version_created = True
+                    new_version_id = new_version.id
+                    new_version_number = next_version_number
+                    version_message = f'All commented paragraphs edited - created v{next_version_number}'
+                    
+                    print(f"DEBUG: Auto-created v{next_version_number} (ID: {new_version.id}) - all commented paragraphs completed")
+                else:
+                    remaining = document.get_remaining_commented_paragraphs()
+                    print(f"DEBUG: Still {len(remaining)} commented paragraphs to edit: {remaining}")
+                    version_message = f'Progress: {len(document.edited_commented_paragraphs)}/{len(document.get_commented_paragraph_ids())} commented paragraphs edited'
             
             paragraph = Paragraph.objects.get(document=document, paragraph_id=paragraph_id)
             print(f"DEBUG: Found paragraph {paragraph_id}, processing ML compliance checks...")
@@ -637,7 +661,7 @@ class EditParagraphView(XMLFormattingMixin, APIView):
             
             print(f"DEBUG: Successfully completed EditParagraphView.put for paragraph {paragraph_id}")
             
-            # Update response with ML compliance results
+            # Update response with ML compliance results and versioning info
             response_data = {
                 'paragraph_id': paragraph.paragraph_id,
                 'text': paragraph.text,
@@ -646,19 +670,27 @@ class EditParagraphView(XMLFormattingMixin, APIView):
             }
             
             # Add version information if auto-versioning occurred
-            if document.id != int(request.data.get('document_id')):
+            if version_created:
                 response_data['version_created'] = True
-                response_data['new_version_id'] = document.id
-                response_data['new_version_number'] = document.version_number
-                response_data['version_message'] = f'Automatically created v{document.version_number} for editing'
+                response_data['new_version_id'] = new_version_id
+                response_data['new_version_number'] = new_version_number
+                response_data['version_message'] = version_message
+            elif version_message:  # Progress update without version creation
+                response_data['version_message'] = version_message
             
             if compliant_comment_ids:
                 response_data['scheduled_deletions'] = compliant_comment_ids
-                response_data['message'] = f'Paragraph updated. {len(compliant_comment_ids)} compliant comment(s) scheduled for deletion in 5 minutes. {len(ml_results) - len(compliant_comment_ids)} comment(s) remain.'
+                if version_message:
+                    response_data['message'] = f'{version_message}. {len(compliant_comment_ids)} compliant comment(s) scheduled for deletion in 5 minutes.'
+                else:
+                    response_data['message'] = f'Paragraph updated. {len(compliant_comment_ids)} compliant comment(s) scheduled for deletion in 5 minutes. {len(ml_results) - len(compliant_comment_ids)} comment(s) remain.'
             elif ml_results:
-                response_data['message'] = f'Paragraph updated. {len(ml_results)} comment(s) checked - none were compliant enough for scheduled deletion.'
+                if version_message:
+                    response_data['message'] = f'{version_message}. {len(ml_results)} comment(s) checked - none were compliant enough for scheduled deletion.'
+                else:
+                    response_data['message'] = f'Paragraph updated. {len(ml_results)} comment(s) checked - none were compliant enough for scheduled deletion.'
             else:
-                response_data['message'] = 'Paragraph updated.'
+                response_data['message'] = version_message or 'Paragraph updated.'
             
             return Response(response_data)
             
@@ -1538,6 +1570,7 @@ class GetDocumentView(APIView):
                 'parent_document_id': document.parent_document.id if document.parent_document else None,
                 'base_document_id': document.base_document.id if document.base_document else document.id,
                 'version_notes': document.version_notes,
+                'edited_commented_paragraphs': document.edited_commented_paragraphs,
                 'uploaded_at': document.uploaded_at.isoformat(),
                 'paragraphs': paragraphs_data,
                 'comments': comments_data
