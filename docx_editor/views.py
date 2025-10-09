@@ -839,7 +839,7 @@ class EditParagraphView(XMLFormattingMixin, APIView):
             raise e
 
 
-class AddParagraphView(APIView):
+class AddParagraphView(XMLFormattingMixin, APIView):
     def post(self, request):
         document_id = request.data.get('document_id')
         text = request.data.get('text', '')
@@ -969,16 +969,8 @@ class AddParagraphView(APIView):
             
             tree.write(document_path, encoding='utf-8', xml_declaration=True)
             
-            # Recreate the DOCX file
-            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zip_ref:
-                for root_dir, dirs, files in os.walk(temp_dir):
-                    for file in files:
-                        file_path_full = os.path.join(root_dir, file)
-                        arc_name = os.path.relpath(file_path_full, temp_dir)
-                        zip_ref.write(file_path_full, arc_name)
-                zip_ref.close()
-            import time
-            time.sleep(0.5)  # Ensure file system has settled
+            # Recreate the DOCX file with proper XML formatting
+            self._recreate_docx_with_proper_xml_formatting(file_path, temp_dir)
             
             # Cleanup
             if temp_dir and os.path.exists(temp_dir):
@@ -997,7 +989,7 @@ class AddParagraphView(APIView):
 
 
 @method_decorator(csrf_exempt, name='dispatch')
-class DeleteParagraphView(APIView):
+class DeleteParagraphView(XMLFormattingMixin, APIView):
     def delete(self, request):
         # Parse JSON data using DRF's request.data instead of raw request.body
         try:
@@ -1138,13 +1130,8 @@ class DeleteParagraphView(APIView):
             # Write the updated XML
             tree.write(document_path, encoding='utf-8', xml_declaration=True)
             
-            # Recreate the DOCX file
-            with zipfile.ZipFile(file_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as zip_ref:
-                for root_dir, dirs, files in os.walk(temp_dir):
-                    for file in files:
-                        file_path_full = os.path.join(root_dir, file)
-                        arc_name = os.path.relpath(file_path_full, temp_dir)
-                        zip_ref.write(file_path_full, arc_name)
+            # Recreate the DOCX file with proper XML formatting
+            self._recreate_docx_with_proper_xml_formatting(file_path, temp_dir)
             
             # Cleanup
             if temp_dir and os.path.exists(temp_dir):
@@ -1485,13 +1472,64 @@ class ExportDocumentView(APIView):
             document = Document.objects.get(id=document_id)
             print(f"Exporting document {document_id}: {document.filename}")
             print(f"File path: {document.file_path}")
+            print(f"Version number: {document.version_number}")
+            print(f"Version status: {document.version_status}")
+            print(f"Is base document: {document.base_document is None}")
             
-            # Ensure filename has .docx extension
-            export_filename = document.filename
-            if not export_filename.lower().endswith('.docx'):
-                export_filename += '.docx'
+            # Check if file exists and get basic info
+            if os.path.exists(document.file_path):
+                file_size = os.path.getsize(document.file_path)
+                file_mtime = os.path.getmtime(document.file_path)
+                print(f"File size: {file_size} bytes")
+                print(f"Last modified: {datetime.fromtimestamp(file_mtime)}")
+                
+                # Quick check if file is valid DOCX
+                try:
+                    with zipfile.ZipFile(document.file_path, 'r') as test_zip:
+                        file_list = test_zip.namelist()
+                        print(f"DOCX contains {len(file_list)} files")
+                        if 'word/document.xml' in file_list:
+                            print("✓ Valid DOCX structure detected")
+                        else:
+                            print("⚠ Missing document.xml - file may be corrupted")
+                except Exception as zip_error:
+                    print(f"⚠ DOCX file validation failed: {zip_error}")
+            else:
+                print(f"❌ File not found at: {document.file_path}")
+                
+            # Check if we should rebuild the DOCX from database (sync option)
+            sync_with_db = request.GET.get('sync', '').lower() in ['true', '1', 'yes']
+            if sync_with_db:
+                print("🔄 Rebuilding DOCX from database content...")
+                try:
+                    self._rebuild_docx_from_database(document)
+                    print("✅ DOCX rebuilt successfully from database")
+                except Exception as rebuild_error:
+                    print(f"❌ Failed to rebuild DOCX: {rebuild_error}")
+                    # Continue with export even if rebuild fails
+                
+            # Generate version-aware filename
+            base_filename = document.filename
+            if not base_filename.lower().endswith('.docx'):
+                base_filename += '.docx'
+            
+            # Remove .docx extension to insert version info
+            name_without_ext = base_filename[:-5] if base_filename.lower().endswith('.docx') else base_filename
+            
+            # Create export filename based on version
+            if document.version_number > 1:
+                export_filename = f"{name_without_ext}_v{document.version_number}.docx"
+            else:
+                # For version 1, we can still indicate it's been processed/updated
+                if document.version_status in ['edited', 'commented']:
+                    export_filename = f"{name_without_ext}_updated.docx"
+                else:
+                    export_filename = base_filename
+            
+            print(f"Export filename: {export_filename}")
             
             if not document.file_path:
+                return Response({'error': 'No file path saved for document'}, status=status.HTTP_404_NOT_FOUND)
                 return Response({'error': 'No file path saved for document'}, status=status.HTTP_404_NOT_FOUND)
             
             if os.path.exists(document.file_path):
@@ -1500,7 +1538,7 @@ class ExportDocumentView(APIView):
                     response = FileResponse(
                         file,
                         as_attachment=True,
-                        filename=f"updated_{export_filename}",
+                        filename=export_filename,
                         content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
                     )
                     return response
@@ -1522,6 +1560,52 @@ class ExportDocumentView(APIView):
         except Exception as e:
             print(f"Unexpected error in export: {str(e)}")
             return Response({'error': f'Export error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _rebuild_docx_from_database(self, document):
+        """Rebuild the DOCX file content from the current database state"""
+        from docx import Document as DocxDocument
+        
+        # Create a new DOCX document
+        new_doc = DocxDocument()
+        
+        # Clear default paragraph
+        if new_doc.paragraphs:
+            p = new_doc.paragraphs[0]
+            p.clear()
+        
+        # Add paragraphs from database
+        paragraphs = document.paragraphs.all().order_by('paragraph_id')
+        for para in paragraphs:
+            if para.html_content and para.html_content.strip():
+                # Handle HTML content - extract text for now (could be enhanced for formatting)
+                from html import unescape
+                import re
+                text_content = re.sub('<[^<]+?>', '', para.html_content)
+                text_content = unescape(text_content).strip()
+            else:
+                text_content = para.text or ''
+            
+            if text_content:
+                new_doc.add_paragraph(text_content)
+            else:
+                new_doc.add_paragraph('')  # Keep empty paragraphs
+        
+        # Save to the document's file path
+        backup_path = document.file_path + '.backup'
+        if os.path.exists(document.file_path):
+            shutil.copy2(document.file_path, backup_path)
+        
+        try:
+            new_doc.save(document.file_path)
+            # Remove backup if successful
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+        except Exception as e:
+            # Restore backup if save failed
+            if os.path.exists(backup_path):
+                shutil.copy2(backup_path, document.file_path)
+                os.remove(backup_path)
+            raise e
 
 
 class GetDocumentView(APIView):

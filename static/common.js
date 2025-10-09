@@ -84,6 +84,25 @@ class DocxBase {
         }
     }
     
+    highlightAndScrollToParagraph(paragraphId) {
+        // Remove existing highlights
+        document.querySelectorAll('.paragraph-wrapper').forEach(p => {
+            p.classList.remove('highlighted', 'comment-highlighted');
+        });
+        
+        // Add highlight to selected paragraph
+        const paragraph = document.querySelector(`.paragraph-wrapper[data-id="${paragraphId}"]`);
+        if (paragraph) {
+            paragraph.classList.add('comment-highlighted');
+            paragraph.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            // Remove highlight after 3 seconds
+            setTimeout(() => {
+                paragraph.classList.remove('comment-highlighted');
+            }, 3000);
+        }
+    }
+    
     async handleFileSelect(event) {
         const file = event.target.files[0];
         if (!file) return;
@@ -290,25 +309,68 @@ class DocxBase {
         for (const para of this.paragraphs) {
             // Add paragraph
             const wrapper = this.createParagraphWrapper(para);
-            content.appendChild(wrapper);
             
-            // Add "Add paragraph" button after each paragraph
-            const addButton = document.createElement('button');
-            addButton.className = 'add-paragraph-button';
-            addButton.addEventListener('click', () => {
-                this.insertParagraphAfter(para.id);
-            });
-            content.appendChild(addButton);
+            // Add comment highlighting
+            this.applyCommentHighlighting(wrapper, para.id);
+            
+            content.appendChild(wrapper);
         }
         
-        // Add final "Add paragraph" button if there are no paragraphs
-        if (this.paragraphs.length === 0) {
-            const addButton = document.createElement('button');
-            addButton.className = 'add-paragraph-button';
-            addButton.addEventListener('click', () => {
-                this.insertParagraphAfter(0);
+        // Remove any lingering add-paragraph buttons (for cache cleanup)
+        this.removeAddParagraphButtons();
+    }
+    
+    removeAddParagraphButtons() {
+        // Remove any cached add-paragraph buttons
+        const addButtons = document.querySelectorAll('.add-paragraph-button');
+        addButtons.forEach(button => button.remove());
+    }
+    
+    applyCommentHighlighting(wrapper, paragraphId) {
+        // Count comments for this paragraph
+        const commentsForParagraph = this.comments.filter(c => c.paragraph_id === paragraphId);
+        
+        if (commentsForParagraph.length > 0) {
+            wrapper.classList.add('has-comments');
+            wrapper.dataset.commentCount = commentsForParagraph.length;
+            
+            // Add click handler to navigate to comments section when clicking paragraph
+            wrapper.addEventListener('click', (e) => {
+                // Don't trigger if clicking on interactive elements
+                if (e.target.closest('.paragraph-actions, .compliance-status, .comment-delete-btn')) {
+                    return;
+                }
+                this.navigateToComments(paragraphId);
             });
-            content.appendChild(addButton);
+        }
+    }
+    
+    navigateToComments(paragraphId) {
+        // Scroll to the comment section
+        const commentsList = document.getElementById('commentsList');
+        if (commentsList) {
+            commentsList.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            
+            // Highlight the specific paragraph's comments in the comments section
+            this.highlightParagraphComments(paragraphId);
+        }
+    }
+    
+    highlightParagraphComments(paragraphId) {
+        // Remove existing highlights from comments section
+        document.querySelectorAll('.paragraph-comments.comment-highlighted').forEach(el => {
+            el.classList.remove('comment-highlighted');
+        });
+        
+        // Find and highlight comments for this paragraph in the comments section
+        const paragraphComments = document.querySelector(`[data-paragraph-id="${paragraphId}"]`);
+        if (paragraphComments) {
+            paragraphComments.classList.add('comment-highlighted');
+            
+            // Remove highlight after 3 seconds
+            setTimeout(() => {
+                paragraphComments.classList.remove('comment-highlighted');
+            }, 3000);
         }
     }
     
@@ -352,22 +414,33 @@ class DocxBase {
             
             const paragraphComments = document.createElement('div');
             paragraphComments.className = 'paragraph-comments';
+            paragraphComments.dataset.paragraphId = paragraphId;
             
             const paragraph = this.paragraphs.find(p => p.id === Number(paragraphId));
             if (paragraph) {
                 const header = document.createElement('h4');
                 header.textContent = `Paragraph ${paragraphId}:`;
                 header.title = paragraph.text;
+                header.className = 'comment-clickable';
                 
                 // Add click handler to highlight paragraph
-                header.style.cursor = 'pointer';
-                header.addEventListener('click', () => this.highlightParagraph(Number(paragraphId)));
+                header.addEventListener('click', () => this.highlightAndScrollToParagraph(Number(paragraphId)));
                 
                 paragraphComments.appendChild(header);
             }
             
             for (const comment of comments) {
                 const commentElement = this.createCommentElement(comment);
+                // Add click handler to individual comments to highlight the paragraph in document
+                commentElement.classList.add('comment-clickable');
+                commentElement.addEventListener('click', (e) => {
+                    // Don't trigger if clicking on delete button or cancel button
+                    if (e.target.closest('.comment-delete-btn, .comment-cancel-btn')) {
+                        return;
+                    }
+                    this.highlightAndScrollToParagraph(Number(paragraphId));
+                });
+                
                 paragraphComments.appendChild(commentElement);
             }
             

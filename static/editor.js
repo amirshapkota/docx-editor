@@ -146,7 +146,8 @@ class DocxEditor extends DocxBase {
                 try {
                     this.showStatus('Exporting document...', 'info');
                     
-                    const response = await fetch(`/editor/api/document/${this.currentDocumentId}/export/`, {
+                    // Always sync with database to ensure exported version reflects current edits
+                    const response = await fetch(`/editor/api/document/${this.currentDocumentId}/export/?sync=true`, {
                         method: 'GET'
                     });
 
@@ -203,6 +204,26 @@ class DocxEditor extends DocxBase {
             } else if (e.key === 'Backspace' && content.textContent === '' && this.paragraphs.length > 1) {
                 e.preventDefault();
                 this.showDeleteModal(para.id);
+            } else if (e.key === 'ArrowDown' && this.isAtEndOfParagraph(content)) {
+                // If at end of paragraph and pressing down arrow, check if we need a new paragraph
+                const nextParagraph = this.getNextParagraph(para.id);
+                if (!nextParagraph) {
+                    e.preventDefault();
+                    this.insertParagraphAfter(para.id);
+                }
+            }
+        });
+        
+        // Add double-click to insert paragraph after
+        content.addEventListener('dblclick', (e) => {
+            if (e.detail === 2) { // Ensure it's a real double-click
+                const selection = window.getSelection();
+                const range = selection.getRangeAt(0);
+                const atEnd = range.endOffset === content.textContent.length;
+                
+                if (atEnd) {
+                    this.insertParagraphAfter(para.id);
+                }
             }
         });
         
@@ -377,9 +398,9 @@ class DocxEditor extends DocxBase {
         }
         
         if (data.can_auto_delete) {
-            message += ' ✅ Can auto-delete';
+            message += ' Can auto-delete';
         } else {
-            message += ' ⚠️ Needs attention';
+            message += ' Needs attention';
         }
         
         return message;
@@ -906,6 +927,26 @@ class DocxEditor extends DocxBase {
         try {
             const position = paragraphId + 1;
             
+            // Get the current paragraph to copy its styling
+            const currentParagraph = this.paragraphs.find(p => p.id === paragraphId);
+            let inheritedHtmlContent = '';
+            
+            // If the current paragraph has HTML formatting, create a template for the new paragraph
+            if (currentParagraph && currentParagraph.html_content && currentParagraph.html_content.trim()) {
+                // Extract the HTML tag structure but with empty content
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = currentParagraph.html_content;
+                
+                // Get the first element (usually a p, h1, h2, etc.)
+                const firstElement = tempDiv.firstElementChild;
+                if (firstElement) {
+                    // Clone the element but clear its content
+                    const templateElement = firstElement.cloneNode(false);
+                    templateElement.innerHTML = '';
+                    inheritedHtmlContent = templateElement.outerHTML;
+                }
+            }
+            
             const response = await fetch('/editor/api/add_paragraph/', {
                 method: 'POST',
                 headers: {
@@ -929,10 +970,11 @@ class DocxEditor extends DocxBase {
                 }
             });
             
-            // Add new paragraph
+            // Add new paragraph with inherited formatting
             const newParagraph = {
                 id: position,
-                text: ''
+                text: '',
+                html_content: inheritedHtmlContent
             };
             this.paragraphs.push(newParagraph);
             
@@ -1010,8 +1052,8 @@ class DocxEditor extends DocxBase {
         tracker.innerHTML = `
             <div class="progress-text">
                 ${isComplete 
-                    ? `✅ All commented paragraphs edited - new version will be created next!`
-                    : `📝 Editing progress: ${progress}/${total} commented paragraphs edited`
+                    ? `All commented paragraphs edited - new version will be created next!`
+                    : `Editing progress: ${progress}/${total} commented paragraphs edited`
                 }
             </div>
             <div class="progress-bar-container">
@@ -1056,6 +1098,76 @@ class DocxEditor extends DocxBase {
     renderDocument() {
         super.renderDocument();
         this.updateProgressTracker();
+        this.setupEmptyDocumentHandling();
+    }
+
+    setupEmptyDocumentHandling() {
+        const content = document.getElementById('document-content');
+        
+        // If document is empty, add click handler to create first paragraph
+        if (this.paragraphs.length === 0) {
+            content.innerHTML = '<div class="empty-document-placeholder">Click here to start typing...</div>';
+            
+            const placeholder = content.querySelector('.empty-document-placeholder');
+            placeholder.addEventListener('click', async () => {
+                await this.insertParagraphAfter(0);
+                // Focus on the new paragraph
+                setTimeout(() => {
+                    const firstParagraph = content.querySelector('.paragraph-content');
+                    if (firstParagraph) {
+                        firstParagraph.focus();
+                    }
+                }, 100);
+            });
+        } else {
+            // For documents with content, add click handler for empty space at the end
+            this.setupEndOfDocumentClicking();
+        }
+    }
+
+    setupEndOfDocumentClicking() {
+        const content = document.getElementById('document-content');
+        
+        content.addEventListener('click', async (e) => {
+            // Check if click is in empty space after the last paragraph
+            if (e.target === content || e.target.closest('.paragraph-wrapper') === null) {
+                const rect = content.getBoundingClientRect();
+                const clickY = e.clientY - rect.top;
+                const lastParagraph = content.querySelector('.paragraph-wrapper:last-child');
+                
+                if (lastParagraph) {
+                    const lastRect = lastParagraph.getBoundingClientRect();
+                    const lastParagraphBottom = lastRect.bottom - rect.top;
+                    
+                    // If clicked below the last paragraph, add a new one
+                    if (clickY > lastParagraphBottom + 10) { // 10px buffer
+                        const lastParagraphId = parseInt(lastParagraph.dataset.id);
+                        await this.insertParagraphAfter(lastParagraphId);
+                        
+                        // Focus on the new paragraph
+                        setTimeout(() => {
+                            const newParagraph = content.querySelector('.paragraph-wrapper:last-child .paragraph-content');
+                            if (newParagraph) {
+                                newParagraph.focus();
+                            }
+                        }, 100);
+                    }
+                }
+            }
+        });
+    }
+
+    isAtEndOfParagraph(element) {
+        const selection = window.getSelection();
+        if (selection.rangeCount === 0) return false;
+        
+        const range = selection.getRangeAt(0);
+        return range.endOffset === element.textContent.length && range.collapsed;
+    }
+
+    getNextParagraph(currentId) {
+        const currentIndex = this.paragraphs.findIndex(p => p.id === currentId);
+        return currentIndex < this.paragraphs.length - 1 ? this.paragraphs[currentIndex + 1] : null;
     }
 }
 
