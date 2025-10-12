@@ -33,27 +33,61 @@ class DocxEditor extends DocxBase {
     renderDocumentsList(documents) {
         const uploadSection = document.getElementById('upload-section');
         const listContainer = document.createElement('div');
-        listContainer.className = 'documents-list';
-        listContainer.innerHTML = '<h3>Available Documents</h3>';
+        listContainer.className = 'col-lg-12 mb-6 mb-xl-0 documents-list';
+        
+        // Create the header and container structure
+        listContainer.innerHTML = `
+            <small class="fw-medium">Available Documents</small>
+            <div class="demo-inline-spacing mt-4">
+                <div class="list-group" id="documents-list-group">
+                </div>
+            </div>
+        `;
+
+        const listGroup = listContainer.querySelector('#documents-list-group');
 
         if (documents.length === 0) {
-            listContainer.innerHTML += '<p>No documents available for editing</p>';
+            listGroup.innerHTML = '<div class="list-group-item list-group-item-action disabled">No documents available for editing</div>';
         } else {
-            const list = document.createElement('ul');
-            documents.forEach(doc => {
-                const item = document.createElement('li');
-                item.innerHTML = `<a href="#" data-id="${doc.id}">${doc.filename}</a>`;
-                item.querySelector('a').addEventListener('click', (e) => {
+            documents.forEach((doc, index) => {
+                const item = document.createElement('a');
+                item.href = 'javascript:void(0);';
+                item.className = 'list-group-item list-group-item-action';
+                item.dataset.id = doc.id;
+                
+                // Truncate long filenames for better display
+                const displayName = doc.filename.length > 50 
+                    ? doc.filename.substring(0, 47) + '...' 
+                    : doc.filename;
+                item.textContent = displayName;
+                item.title = doc.filename; // Show full name on hover
+                
+                // Mark the currently loaded document as active
+                if (this.currentDocumentId && doc.id === this.currentDocumentId) {
+                    item.classList.add('active');
+                }
+                
+                item.addEventListener('click', (e) => {
                     e.preventDefault();
+                    
                     // Check for unsaved changes before switching documents
                     if (this.unsavedChanges && !confirm('You have unsaved changes. Are you sure you want to switch documents?')) {
                         return;
                     }
+                    
+                    // Remove active class from all items
+                    listGroup.querySelectorAll('.list-group-item').forEach(el => {
+                        el.classList.remove('active');
+                    });
+                    
+                    // Add active class to clicked item
+                    item.classList.add('active');
+                    
                     this.loadDocument(doc.id);
                 });
-                list.appendChild(item);
+                
+                listGroup.appendChild(item);
             });
-            listContainer.appendChild(list);
         }
 
         // Insert the list before the upload area

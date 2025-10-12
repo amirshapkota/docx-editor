@@ -64,8 +64,8 @@ body {
 }
 
 .upload-area.dragover {
-    border-color: #007bff;
-    background-color: #f8f9fa;
+    border-color: #6366f1;
+    background-color: #f8f9ff;
     transform: scale(1.02);
 }
 
@@ -82,7 +82,7 @@ body {
 
 .documents-list h3 {
     margin-bottom: 10px;
-    color: #007bff;
+    color: #6366f1;
 }
 
 .documents-list ul {
@@ -105,12 +105,12 @@ body {
 }
 
 .documents-list a:hover {
-    background: #e9ecef;
-    color: #007bff;
+    background: #f0f4ff;
+    color: #6366f1;
 }
 
 .btn {
-    background: #007bff;
+    background: #6366f1;
     color: white;
     border: none;
     padding: 10px 20px;
@@ -121,9 +121,9 @@ body {
 }
 
 .btn:hover {
-    background: #0056b3;
+    background: #5855eb;
     transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 4px rgba(99, 102, 241, 0.3);
 }
 
 .btn:active {
@@ -131,12 +131,14 @@ body {
 }
 
 .btn:disabled {
-    background: #ccc;
+    background: #e5e7eb;
+    color: #9ca3af;
     cursor: not-allowed;
+    box-shadow: none;
 }
 
 .btn-small {
-    background: #007bff;
+    background: #6366f1;
     color: white;
     border: none;
     padding: 5px 10px;
@@ -149,7 +151,7 @@ body {
 
 .btn-small:hover {
     transform: translateY(-1px);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    box-shadow: 0 2px 4px rgba(99, 102, 241, 0.2);
 }
 
 .btn-small:active {
@@ -174,11 +176,11 @@ body {
 }
 
 .btn-small.btn-primary {
-    background: #007bff;
+    background: #6366f1;
 }
 
 .btn-small.btn-primary:hover {
-    background: #0056b3;
+    background: #5855eb;
 }
 
 .editor-container {
@@ -196,14 +198,14 @@ body {
 }
 
 .paragraph-wrapper:hover {
-    background-color: rgba(0, 123, 255, 0.05);
-    border-color: rgba(0, 123, 255, 0.1);
+    background-color: rgba(99, 102, 241, 0.05);
+    border-color: rgba(99, 102, 241, 0.1);
 }
 
 .paragraph-wrapper.highlighted {
-    background-color: rgba(0, 123, 255, 0.1);
-    border: 1px solid rgba(0, 123, 255, 0.2);
-    box-shadow: 0 2px 4px rgba(0, 123, 255, 0.1);
+    background-color: rgba(99, 102, 241, 0.1);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    box-shadow: 0 2px 4px rgba(99, 102, 241, 0.1);
 }
 
 .paragraph-wrapper:hover .paragraph-marker,
@@ -260,7 +262,7 @@ body {
 
 .save-status.saving {
     color: white;
-    background: #007bff;
+    background: #6366f1;
 }
 
 .save-status.saved {
@@ -299,7 +301,7 @@ body {
 
 .comment-author {
     font-weight: bold;
-    color: #007bff;
+    color: #6366f1;
     font-size: 13px;
     flex-shrink: 0;
 }
@@ -355,7 +357,7 @@ body {
 }
 
 .paragraph-comments h4 {
-    color: #007bff;
+    color: #6366f1;
     font-size: 14px;
     margin-bottom: 10px;
     padding: 5px;
@@ -402,15 +404,15 @@ body {
 
 .form-control:focus {
     outline: none;
-    border-color: #007bff;
-    box-shadow: 0 0 0 3px rgba(0,123,255,0.25);
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99,102,241,0.25);
 }
 
 .comments-list {
     flex: 1;
     margin-bottom: 20px;
     scrollbar-width: thin;
-    scrollbar-color: #007bff #f0f0f0;
+    scrollbar-color: #6366f1 #f0f0f0;
 }
 
 .comments-list::-webkit-scrollbar {
@@ -423,7 +425,7 @@ body {
 }
 
 .comments-list::-webkit-scrollbar-thumb {
-    background-color: #007bff;
+    background-color: #6366f1;
     border-radius: 4px;
 }
 
@@ -691,14 +693,14 @@ body {
 }
 
 .paragraph-wrapper:hover {
-    background-color: rgba(0, 123, 255, 0.03);
-    border-color: rgba(0, 123, 255, 0.05);
+    background-color: rgba(99, 102, 241, 0.03);
+    border-color: rgba(99, 102, 241, 0.05);
 }
 
 .paragraph-wrapper.highlighted,
 .paragraph-wrapper.selected {
-    background-color: rgba(0, 123, 255, 0.08);
-    border-left: 3px solid #007bff;
+    background-color: rgba(99, 102, 241, 0.08);
+    border-left: 3px solid #6366f1;
     padding-left: 8px;
     margin-left: -11px;
 }
@@ -718,7 +720,7 @@ body {
 }
 
 .paragraph-content:focus {
-    background-color: rgba(0, 123, 255, 0.02);
+    background-color: rgba(99, 102, 241, 0.02);
     border-radius: 2px;
     padding: 2px 4px;
 }
@@ -856,7 +858,7 @@ body:has(h1:contains("Document Commenter")) .paragraph-wrapper,
 body:has(h1:contains("Document Commenter")) .paragraph-wrapper:hover,
 .container:has(h1:contains("Document Commenter")) .paragraph-wrapper:hover {
     border: none !important;
-    background-color: rgba(0, 123, 255, 0.02);
+    background-color: rgba(99, 102, 241, 0.02);
 }
 
 body:has(h1:contains("Document Commenter")) .paragraph-wrapper.highlighted,
@@ -865,7 +867,7 @@ body:has(h1:contains("Document Commenter")) .paragraph-wrapper.selected,
 .container:has(h1:contains("Document Commenter")) .paragraph-wrapper.selected {
     border: none !important;
     border-left: none !important;
-    background-color: rgba(0, 123, 255, 0.05);
+    background-color: rgba(99, 102, 241, 0.05);
     padding-left: 4px;
     margin-left: 0;
 }
@@ -877,14 +879,14 @@ body:has(h1:contains("Document Commenter")) .paragraph-wrapper.selected,
 
 .commenter-page .paragraph-wrapper:hover {
     border: none !important;
-    background-color: rgba(0, 123, 255, 0.02);
+    background-color: rgba(99, 102, 241, 0.02);
 }
 
 .commenter-page .paragraph-wrapper.highlighted,
 .commenter-page .paragraph-wrapper.selected {
     border: none !important;
     border-left: none !important;
-    background-color: rgba(0, 123, 255, 0.05);
+    background-color: rgba(99, 102, 241, 0.05);
     padding-left: 4px;
     margin-left: 0;
 }

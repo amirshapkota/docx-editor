@@ -133,7 +133,7 @@ class DocxCommenter extends DocxBase {
             }
             .paragraph-wrapper.selected {
                 background-color: #e9ecef;
-                border-color: #007bff;
+                border-color: #6366f1;
             }
             .paragraph-content {
                 margin: 0;
@@ -148,7 +148,7 @@ class DocxCommenter extends DocxBase {
             }
             .comment-author {
                 font-weight: bold;
-                color: #007bff;
+                color: #6366f1;
                 margin-bottom: 5px;
             }
             .comment-text {
